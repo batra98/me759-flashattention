@@ -1,8 +1,8 @@
 #include "attention_utils.cuh"
 #include <cuda_runtime.h>
-#include <cmath>
+#include <cfloat>
 
-__global__ void qkt_kernel(const float* Q, const float* K, float* S, int N, int d){
+__global__ void qkt_kernel(const float* Q,const float* K,float* S,int N,int d){
     int row=blockIdx.y*blockDim.y+threadIdx.y;
     int col=blockIdx.x*blockDim.x+threadIdx.x;
     if(row>=N||col>=N) return;
@@ -11,16 +11,20 @@ __global__ void qkt_kernel(const float* Q, const float* K, float* S, int N, int 
     S[row*N+col]=acc*rsqrtf((float)d);
 }
 
-// NOTE: softmax missing numerical stability (will fix)
-__global__ void softmax_kernel(float* S, int N){
+// Fixed: subtract row max for numerical stability
+__global__ void softmax_kernel(float* S,int N){
     int row=blockIdx.x*blockDim.x+threadIdx.x;
     if(row>=N) return;
+    float* rp=S+row*N;
+    float mx=-FLT_MAX;
+    for(int j=0;j<N;++j) mx=fmaxf(mx,rp[j]);
     float sum=0.f;
-    for(int j=0;j<N;++j){ S[row*N+j]=expf(S[row*N+j]); sum+=S[row*N+j]; }
-    for(int j=0;j<N;++j) S[row*N+j]/=sum;
+    for(int j=0;j<N;++j){ rp[j]=expf(rp[j]-mx); sum+=rp[j]; }
+    float inv=1.f/sum;
+    for(int j=0;j<N;++j) rp[j]*=inv;
 }
 
-__global__ void pv_kernel(const float* P, const float* V, float* O, int N, int d){
+__global__ void pv_kernel(const float* P,const float* V,float* O,int N,int d){
     int row=blockIdx.y*blockDim.y+threadIdx.y;
     int col=blockIdx.x*blockDim.x+threadIdx.x;
     if(row>=N||col>=d) return;
