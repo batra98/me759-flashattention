@@ -32,6 +32,7 @@ __global__ void flash_attn_fwd(
     for (int k=0;k<D;++k) O_acc[k]=0.f;
     float m_i=-FLT_MAX, l_i=0.f;
     const float scale=rsqrtf((float)D);
+    // Tile sizes BR=BC=32 tuned for sm_75 48KB SRAM budget
     const int Tc=(N+BC-1)/BC;
 
     for (int j=0;j<Tc;++j) {
