@@ -1,0 +1,11 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap');
+:root { --bg:#08090f; --text:#e2e4ef; --accent:#818cf8; }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;line-height:1.7}
+h1{font-size:clamp(2rem,5vw,3.5rem);font-weight:800}
+h2{font-size:1.8rem;font-weight:700;margin-bottom:1rem}
+.gradient-text{background:linear-gradient(135deg,#6366f1,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero{padding:120px 24px 80px;text-align:center}
+.hero-badge{display:inline-block;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.4);color:var(--accent);font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:4px 14px;border-radius:999px;margin-bottom:20px}
+.hero-sub{color:#7b8099;margin:16px 0 28px;font-size:1rem}
+.btn-primary{display:inline-flex;align-items:center;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600;padding:10px 22px;border-radius:10px;text-decoration:none}
