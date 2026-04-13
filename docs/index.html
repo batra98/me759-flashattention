@@ -1,24 +1,357 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <title>FlashAttention CUDA — ME759</title>
-  <link rel="stylesheet" href="style.css"/>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FlashAttention CUDA — ME759 Project</title>
+  <meta name="description" content="A bare-metal CUDA implementation of FlashAttention with online softmax and shared-memory tiling, demonstrating O(N) HBM traffic vs O(N²) for naive attention." />
+
+  <!-- KaTeX -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+          onload="renderMathInElement(document.body, {
+            delimiters: [
+              {left:'$$',  right:'$$',  display:true},
+              {left:'\\[', right:'\\]', display:true},
+              {left:'$',   right:'$',   display:false},
+              {left:'\\(', right:'\\)', display:false}
+            ]
+          });"></script>
+
+  <!-- Plotly -->
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+
+  <!-- Highlight.js for code -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="assets/tile_anim.css" />
 </head>
 <body>
+
+<!-- ─────────────────────── HERO ─────────────────────────────────────────── -->
 <header class="hero">
+  <div class="hero-glow"></div>
   <div class="hero-content">
-    <div class="hero-badge">ME 759</div>
-    <h1>FlashAttention <span class="gradient-text">in Raw CUDA</span></h1>
-    <p class="hero-sub">Online softmax, shared-memory tiling, O(N) HBM traffic.</p>
+    <div class="hero-badge">ME 759 · High-Performance Computing</div>
+    <h1>FlashAttention<br><span class="gradient-text">in Raw CUDA</span></h1>
+    <p class="hero-sub">
+      A bare-metal implementation of IO-aware attention on an NVIDIA RTX 2080 Ti —
+      online softmax, shared-memory tiling, and <strong>O(N)</strong> HBM traffic.
+    </p>
     <div class="hero-links">
-      <a href="https://github.com/batra98/me759-flashattention" class="btn-primary">GitHub</a>
+      <a href="https://github.com/batra98/me759-flashattention" class="btn-primary" target="_blank">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.37.6.1.82-.26.82-.57v-2c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.8 1.3 3.49 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.17 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.65.25 2.87.12 3.17.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.68.83.57C20.57 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <a href="https://arxiv.org/abs/2205.14135" class="btn-secondary" target="_blank">
+        Paper (Dao et al. 2022)
+      </a>
+    </div>
+  </div>
+  <!-- Mini tile animation in hero -->
+  <div class="hero-anim">
+    <div class="mini-hbm">
+      <div class="mem-block q-block">Q</div>
+      <div class="mem-block k-block">K</div>
+      <div class="mem-block v-block">V</div>
+      <div class="mem-block o-block">O</div>
+      <span class="mem-label">HBM (slow)</span>
+    </div>
+    <div class="mini-arrows">
+      <div class="arrow-down a1"></div>
+      <div class="arrow-down a2"></div>
+      <div class="arrow-down a3"></div>
+      <div class="arrow-up  a4"></div>
+    </div>
+    <div class="mini-sram">
+      <div class="tile q-tile">Q<sub>i</sub></div>
+      <div class="tile k-tile">K<sub>j</sub></div>
+      <div class="tile v-tile">V<sub>j</sub></div>
+      <span class="mem-label">SRAM (fast, on-chip)</span>
     </div>
   </div>
 </header>
-<main style="max-width:860px;margin:0 auto;padding:60px 24px;">
-  <h2>Background</h2>
-  <p>Coming soon — benchmarks, algorithm walkthrough, and interactive charts.</p>
-</main>
+
+<!-- ─────────────────────── NAV ──────────────────────────────────────────── -->
+<nav class="sticky-nav" id="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">FlashAttention CUDA</span>
+    <ul>
+      <li><a href="#background">Background</a></li>
+      <li><a href="#algorithm">Algorithm</a></li>
+      <li><a href="#results">Results</a></li>
+      <li><a href="#code">Code</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ─────────────────────── BACKGROUND ───────────────────────────────────── -->
+<section id="background" class="section">
+  <div class="container">
+    <div class="section-tag">Background</div>
+    <h2>Why Attention is Memory-Bound</h2>
+    <p>
+      The core operation in Transformers is <strong>scaled dot-product attention</strong>:
+    </p>
+    <div class="math-block">
+      $$\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d}}\right)V$$
+    </div>
+    <p>
+      where $Q, K, V \in \mathbb{R}^{N \times d}$. The naive implementation materialises the
+      <em>full</em> $N \times N$ score matrix $S = QK^\top / \sqrt{d}$ in HBM (GPU DRAM), reads it
+      back for softmax, and reads it again to compute $PV$. This incurs
+      $\Theta(N^2)$ HBM reads and writes, making it <strong>memory-bandwidth–limited</strong>
+      even for modest sequence lengths.
+    </p>
+
+    <div class="cards-row">
+      <div class="card card-red">
+        <div class="card-icon">🐌</div>
+        <h3>Naive Attention</h3>
+        <p>3 kernel launches, 3+ HBM round-trips for the $N\times N$ matrix.</p>
+        <div class="card-stat">$\mathcal{O}(N^2)$ HBM bytes</div>
+      </div>
+      <div class="card card-green">
+        <div class="card-icon">⚡</div>
+        <h3>FlashAttention</h3>
+        <p>Tiles Q, K, V into SRAM. $N\times N$ matrix <em>never</em> leaves the chip.</p>
+        <div class="card-stat">$\mathcal{O}(N \cdot d)$ HBM bytes</div>
+      </div>
+    </div>
+
+    <h3 class="subsection-title">Hardware: NVIDIA RTX 2080 Ti (Turing, sm_75)</h3>
+    <div class="spec-table">
+      <div class="spec-row"><span>HBM Bandwidth</span><strong>616 GB/s</strong></div>
+      <div class="spec-row"><span>SRAM per SM</span><strong>48 KB shared memory</strong></div>
+      <div class="spec-row"><span>FP32 Throughput</span><strong>13.4 TFLOP/s</strong></div>
+      <div class="spec-row"><span>Registers / SM</span><strong>65 536</strong></div>
+    </div>
+    <p>
+      For $d = 64$, our tile sizes $B_r = B_c = 32$ occupy
+      $(B_r + 2B_c)\cdot d \cdot 4 = 24\,576$ B = <strong>24 KB</strong> — comfortably within
+      the 48 KB limit.
+    </p>
+  </div>
+</section>
+
+<!-- ─────────────────────── ALGORITHM ────────────────────────────────────── -->
+<section id="algorithm" class="section section-dark">
+  <div class="container">
+    <div class="section-tag">Algorithm</div>
+    <h2>Online Softmax &amp; Tiling</h2>
+
+    <h3 class="subsection-title">Online Softmax</h3>
+    <p>
+      Standard softmax requires two passes over a row: one to find the max $m$, one to
+      exponentiate &amp; normalise. With tiling we can't afford to see the whole row at once.
+      The key insight is that the denominator can be <em>updated incrementally</em>:
+    </p>
+    <div class="math-block">
+      $$m^{(j)}_i = \max\!\bigl(m^{(j-1)}_i,\; \tilde{m}_{ij}\bigr)$$
+    </div>
+    <div class="math-block">
+      $$\ell^{(j)}_i = e^{m^{(j-1)}_i - m^{(j)}_i}\,\ell^{(j-1)}_i
+                     + e^{\tilde{m}_{ij} - m^{(j)}_i}\,\tilde{\ell}_{ij}$$
+    </div>
+    <div class="math-block">
+      $$O^{(j)}_i = \underbrace{e^{m^{(j-1)}_i - m^{(j)}_i}}_{\alpha}\,O^{(j-1)}_i
+                  + \underbrace{e^{\tilde{m}_{ij} - m^{(j)}_i}}_{\beta}\,\tilde{P}_{ij}V_j$$
+    </div>
+    <p>
+      After all $T_c$ K/V tiles: $O_i \leftarrow O_i / \ell^{(T_c)}_i$.
+      The running state $(m_i, \ell_i, O_i)$ lives entirely in registers — <strong>no HBM writes
+      for intermediate results.</strong>
+    </p>
+
+    <h3 class="subsection-title">Step-Through Animation</h3>
+    <p class="anim-desc">Watch a single Q tile ($i=0$) iterate over all K/V tiles. Click <strong>Next Step</strong> to advance.</p>
+
+    <!-- Tile animation -->
+    <div class="tile-viz" id="tileViz">
+      <!-- HBM row -->
+      <div class="viz-row">
+        <div class="viz-label">HBM</div>
+        <div class="viz-mats">
+          <div class="hbm-mat q-mat" id="hbmQ">
+            <div class="hbm-tile" id="hbmQtile"></div>
+            <span>Q</span>
+          </div>
+          <div class="hbm-mat k-mat" id="hbmK">
+            <div class="hbm-tile kv-tile" id="hbmKtile"></div>
+            <span>K</span>
+          </div>
+          <div class="hbm-mat v-mat" id="hbmV">
+            <div class="hbm-tile kv-tile" id="hbmVtile"></div>
+            <span>V</span>
+          </div>
+          <div class="hbm-mat o-mat" id="hbmO">
+            <span>O</span>
+          </div>
+        </div>
+      </div>
+      <!-- SRAM row -->
+      <div class="viz-row">
+        <div class="viz-label">SRAM</div>
+        <div class="sram-box">
+          <div class="sram-tile" id="sramQ"></div>
+          <div class="sram-tile" id="sramK"></div>
+          <div class="sram-tile" id="sramV"></div>
+          <div class="sram-regs">
+            <span id="regLabel">$m_i = -\infty$, $\ell_i = 0$, $O_i = 0$</span>
+          </div>
+        </div>
+      </div>
+      <!-- Step info -->
+      <div class="step-info" id="stepInfo">Press "Next Step" to start the animation.</div>
+    </div>
+
+    <div class="anim-controls">
+      <button id="stepBtn" class="btn-primary" onclick="tileStep()">Next Step →</button>
+      <button id="resetBtn" class="btn-secondary" onclick="tileReset()">Reset</button>
+      <span id="stepCounter" class="step-counter">Step 0 / 6</span>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────── RESULTS ──────────────────────────────────────── -->
+<section id="results" class="section">
+  <div class="container">
+    <div class="section-tag">Results</div>
+    <h2>Benchmark Results</h2>
+    <p>
+      All experiments run on an NVIDIA RTX 2080 Ti (sm_75), $d = 64$,
+      averaged over 20 iterations with 5 warmup runs.
+      HBM traffic measured with NVIDIA Nsight Compute (NCU).
+    </p>
+
+    <div class="chart-grid">
+      <div class="chart-card">
+        <h3>Latency (ms) vs Sequence Length</h3>
+        <div id="chartTiming" class="chart-div"></div>
+      </div>
+      <div class="chart-card">
+        <h3>HBM Traffic (MB) vs Sequence Length</h3>
+        <div id="chartHBM" class="chart-div"></div>
+      </div>
+    </div>
+
+    <div class="result-callout">
+      <div class="callout-icon">📈</div>
+      <div>
+        <strong>At N = 8192:</strong> FlashAttention is <span id="speedupLabel">~13×</span> faster
+        and reads <span id="hbmLabel">~134×</span> less data from HBM than the naive baseline.
+        The speedup grows with sequence length, consistent with the $O(N^2)$ vs $O(N \cdot d)$ traffic model.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────── CODE ─────────────────────────────────────────── -->
+<section id="code" class="section section-dark">
+  <div class="container">
+    <div class="section-tag">Implementation</div>
+    <h2>Kernel Comparison</h2>
+    <p>
+      Toggle between the <span class="tag-naive">naive</span> three-kernel baseline
+      and the <span class="tag-flash">FlashAttention</span> tiled kernel.
+      The fundamental difference: naive writes $S \in \mathbb{R}^{N \times N}$ to HBM;
+      flash keeps everything in SRAM registers.
+    </p>
+
+    <div class="code-tabs">
+      <button class="tab-btn active" onclick="showTab('naive')">Naive Softmax Kernel</button>
+      <button class="tab-btn"        onclick="showTab('flash')">Flash Attention Kernel</button>
+    </div>
+
+    <div id="tab-naive" class="code-panel active">
+      <pre><code class="language-cuda">// ── Kernel 2: row-wise softmax (in HBM) ──────────────────────────────────
+// Reads and writes the full N×N matrix S — O(N²) HBM traffic
+__global__ void softmax_kernel(float* S, int N) {
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= N) return;
+
+    float* row_ptr = S + row * N;
+
+    // Pass 1: find row max (numerical stability)
+    float mx = -FLT_MAX;
+    for (int j = 0; j &lt; N; ++j)
+        mx = fmaxf(mx, row_ptr[j]);          // reads N floats from DRAM
+
+    // Pass 2: exponentiate and sum
+    float sum = 0.0f;
+    for (int j = 0; j &lt; N; ++j) {
+        row_ptr[j] = expf(row_ptr[j] - mx);  // read + write N floats to DRAM
+        sum += row_ptr[j];
+    }
+
+    // Pass 3: normalize
+    float inv = 1.0f / sum;
+    for (int j = 0; j &lt; N; ++j)
+        row_ptr[j] *= inv;                   // read + write N floats to DRAM
+}
+// Total: ~4·N² float reads + ~2·N² float writes per softmax call</code></pre>
+    </div>
+
+    <div id="tab-flash" class="code-panel">
+      <pre><code class="language-cuda">// ── Online softmax rescale inside FlashAttention kernel ──────────────────
+// Runs entirely in registers — the N×N matrix never exists in HBM
+for (int j = 0; j &lt; Tc; ++j) {
+    // ... load K_j, V_j tiles into SRAM ...
+
+    // Compute S_row = Q[q_idx] · K_j^T / sqrt(d)  (BC dot products)
+    float S_row[BC], m_tilde = -FLT_MAX;
+    for (int jj = 0; jj &lt; bc_actual; ++jj) {
+        float dot = 0.0f;
+        for (int k = 0; k &lt; D; ++k)
+            dot += Q_smem[t][k] * K_smem[jj][k];
+        S_row[jj] = dot * scale;
+        m_tilde   = fmaxf(m_tilde, S_row[jj]);
+    }
+
+    // P_tilde = exp(S_row - m_tilde),  l_tilde = sum(P_tilde)
+    float l_tilde = 0.0f;
+    for (int jj = 0; jj &lt; bc_actual; ++jj) {
+        S_row[jj] = expf(S_row[jj] - m_tilde);
+        l_tilde  += S_row[jj];
+    }
+
+    // ── Online rescale: no global memory access needed ────────────────
+    float m_new = fmaxf(m_i, m_tilde);
+    float alpha = expf(m_i     - m_new);   // rescale old contribution
+    float beta  = expf(m_tilde - m_new);   // rescale new contribution
+
+    for (int k = 0; k &lt; D; ++k) {
+        float pv_k = 0.0f;
+        for (int jj = 0; jj &lt; bc_actual; ++jj)
+            pv_k += S_row[jj] * V_smem[jj][k];
+        O_acc[k] = alpha * O_acc[k] + beta * pv_k; // update in registers
+    }
+    m_i = m_new;
+    l_i = alpha * l_i + beta * l_tilde;
+}
+// Final write: O[q_idx] = O_acc / l_i  ← ONE write to HBM per row</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────── FOOTER ───────────────────────────────────────── -->
+<footer class="footer">
+  <div class="container">
+    <p>
+      ME 759 — High-Performance Computing for Engineering Applications ·
+      University of Wisconsin–Madison · Spring 2026
+    </p>
+    <p class="footer-links">
+      <a href="https://github.com/batra98/me759-flashattention" target="_blank">GitHub</a> ·
+      <a href="https://arxiv.org/abs/2205.14135" target="_blank">FlashAttention Paper</a>
+    </p>
+  </div>
+</footer>
+
+<script src="main.js"></script>
+<script>hljs.highlightAll();</script>
 </body>
 </html>
