@@ -19,8 +19,7 @@
             ]
           });"></script>
 
-  <!-- Plotly -->
-  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <!-- Plotly (Replaced with static PNGs) -->
 
   <!-- Highlight.js for code -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
@@ -230,20 +229,20 @@
     <div class="chart-grid">
       <div class="chart-card">
         <h3>Latency (ms) vs Sequence Length</h3>
-        <div id="chartTiming" class="chart-div"></div>
+        <img src="assets/latency_plot.png" alt="Latency Plot" style="width: 100%; height: auto; border-radius: 8px;">
       </div>
       <div class="chart-card">
         <h3>HBM Traffic (MB) vs Sequence Length</h3>
-        <div id="chartHBM" class="chart-div"></div>
+        <img src="assets/hbm_plot.png" alt="HBM Plot" style="width: 100%; height: auto; border-radius: 8px;">
       </div>
     </div>
 
     <div class="result-callout">
       <div class="callout-icon">📈</div>
       <div>
-        <strong>At N = 8192:</strong> FlashAttention is <span id="speedupLabel">~13×</span> faster
-        and reads <span id="hbmLabel">~134×</span> less data from HBM than the naive baseline.
-        The speedup grows with sequence length, consistent with the $O(N^2)$ vs $O(N \cdot d)$ traffic model.
+        <strong>At N = 4096:</strong> FlashAttention is <span>~1.8×</span> faster
+        and triggers a <span>~138×</span> reduction in global memory writes compared to the naive baseline.
+        The speedup grows with sequence length, consistent with the $O(N)$ vs $O(N^2)$ algorithmic traffic model.
       </div>
     </div>
   </div>
