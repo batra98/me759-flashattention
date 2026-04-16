@@ -23,18 +23,25 @@ for N in "${SEQ_LENS[@]}"; do
     for MODE in naive flash; do
         printf "N=%-5d mode=%-5s ... " "$N" "$MODE"
 
-        # Capture NCU output
-        RAW=$($NCU --csv --metrics \
-            l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum,\
-l1tex__t_bytes_pipe_lsu_mem_global_op_st.sum \
+        # Capture NCU text output (NOT --csv, text is easier to parse)
+        RAW=$($NCU --metrics \
+            l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum,l1tex__t_bytes_pipe_lsu_mem_global_op_st.sum \
             "$BIN" --mode "$MODE" --seq_len "$N" --d_head 64 --warmup 0 --iters 1 2>&1)
 
-        # Sum reads and writes across all kernels (NCU CSV has one row per kernel)
-        # Extract metric values — they're in bytes in CSV mode
-        TOTAL_READ=$(echo "$RAW" | grep "l1tex__t_bytes_pipe_lsu_mem_global_op_ld" | \
-            awk -F',' '{sum += $NF} END {printf "%.2f", sum/1048576}')
-        TOTAL_WRITE=$(echo "$RAW" | grep "l1tex__t_bytes_pipe_lsu_mem_global_op_st" | \
-            awk -F',' '{sum += $NF} END {printf "%.2f", sum/1048576}')
+        # Parse text output. Format per kernel:
+        #   l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum       Mbyte       301.99
+        # Fields: metric_name  unit  value  →  unit=$(NF-1)  val=$NF
+        TOTAL_READ=$(echo "$RAW" | grep "op_ld.sum" | awk '{
+            val=$NF; unit=$(NF-1);
+            if(unit=="Kbyte") val=val/1024;
+            if(unit=="byte") val=val/1048576;
+            sum+=val} END{printf "%.2f",sum}')
+
+        TOTAL_WRITE=$(echo "$RAW" | grep "op_st.sum" | awk '{
+            val=$NF; unit=$(NF-1);
+            if(unit=="Kbyte") val=val/1024;
+            if(unit=="byte") val=val/1048576;
+            sum+=val} END{printf "%.2f",sum}')
 
         echo "$MODE,$N,64,$TOTAL_READ,$TOTAL_WRITE" >> "$OUT"
         printf "read=%s MB  write=%s MB\n" "$TOTAL_READ" "$TOTAL_WRITE"
