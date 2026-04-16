@@ -32,12 +32,14 @@ for N in "${SEQ_LENS[@]}"; do
         # Parse: sum reads across all kernels (handles Mbyte/Kbyte/byte)
         TOTAL_READ=$(grep "op_ld.sum" "$TMPF" | awk '{
             val=$NF; unit=$(NF-1);
+            if(unit=="Gbyte") val=val*1024;
             if(unit=="Kbyte") val=val/1024;
             if(unit=="byte") val=val/1048576;
             sum+=val} END{printf "%.2f",sum}')
 
         TOTAL_WRITE=$(grep "op_st.sum" "$TMPF" | awk '{
             val=$NF; unit=$(NF-1);
+            if(unit=="Gbyte") val=val*1024;
             if(unit=="Kbyte") val=val/1024;
             if(unit=="byte") val=val/1048576;
             sum+=val} END{printf "%.2f",sum}')
