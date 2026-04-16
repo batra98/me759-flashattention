@@ -3,3 +3,4 @@ build/
 __pycache__/ *.pyc
 .vscode/ .DS_Store
 ref_output.npy
+venv/
