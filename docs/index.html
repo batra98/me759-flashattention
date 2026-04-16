@@ -38,7 +38,7 @@
     <div class="hero-badge">ME 759 · High-Performance Computing</div>
     <h1>FlashAttention<br><span class="gradient-text">in Raw CUDA</span></h1>
     <p class="hero-sub">
-      A bare-metal implementation of IO-aware attention on an NVIDIA RTX 2080 Ti —
+      A bare-metal implementation of IO-aware attention on an NVIDIA Tesla T4 —
       online softmax, shared-memory tiling, and <strong>O(N)</strong> HBM traffic.
     </p>
     <div class="hero-links">
@@ -122,11 +122,11 @@
       </div>
     </div>
 
-    <h3 class="subsection-title">Hardware: NVIDIA RTX 2080 Ti (Turing, sm_75)</h3>
+    <h3 class="subsection-title">Hardware: NVIDIA Tesla T4 (Turing, sm_75)</h3>
     <div class="spec-table">
-      <div class="spec-row"><span>HBM Bandwidth</span><strong>616 GB/s</strong></div>
-      <div class="spec-row"><span>SRAM per SM</span><strong>48 KB shared memory</strong></div>
-      <div class="spec-row"><span>FP32 Throughput</span><strong>13.4 TFLOP/s</strong></div>
+      <div class="spec-row"><span>HBM Bandwidth</span><strong>320 GB/s</strong></div>
+      <div class="spec-row"><span>SRAM per SM</span><strong>64 KB shared memory</strong></div>
+      <div class="spec-row"><span>FP32 Throughput</span><strong>8.1 TFLOP/s</strong></div>
       <div class="spec-row"><span>Registers / SM</span><strong>65 536</strong></div>
     </div>
     <p>
@@ -222,7 +222,7 @@
     <div class="section-tag">Results</div>
     <h2>Benchmark Results</h2>
     <p>
-      All experiments run on an NVIDIA RTX 2080 Ti (sm_75), $d = 64$,
+      All experiments run on an NVIDIA Tesla T4 (sm_75), $d = 64$,
       averaged over 20 iterations with 5 warmup runs.
       HBM traffic measured with NVIDIA Nsight Compute (NCU).
     </p>
