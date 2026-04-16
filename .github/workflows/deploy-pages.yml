@@ -24,6 +24,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Prep benchmark data
+        run: |
+          mkdir -p docs/data
+          cp benchmarks/results/*.csv docs/data/
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
