@@ -6,6 +6,7 @@ set -euo pipefail
 BIN="${1:-./flash_attn}"
 OUT="${2:-hbm_traffic.csv}"
 NCU="/usr/local/cuda/bin/ncu"
+TMPF="/tmp/ncu_out.txt"
 
 export HOME=/tmp
 export PATH=/usr/local/cuda/bin:$PATH
@@ -23,21 +24,19 @@ for N in "${SEQ_LENS[@]}"; do
     for MODE in naive flash; do
         printf "N=%-5d mode=%-5s ... " "$N" "$MODE"
 
-        # Capture NCU text output (NOT --csv, text is easier to parse)
-        RAW=$($NCU --metrics \
-            l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum,l1tex__t_bytes_pipe_lsu_mem_global_op_st.sum \
-            "$BIN" --mode "$MODE" --seq_len "$N" --d_head 64 --warmup 0 --iters 1 2>&1)
+        # Run NCU, dump ALL output (stdout+stderr) to temp file
+        $NCU --metrics l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum,l1tex__t_bytes_pipe_lsu_mem_global_op_st.sum \
+            "$BIN" --mode "$MODE" --seq_len "$N" --d_head 64 --warmup 0 --iters 1 \
+            > "$TMPF" 2>&1
 
-        # Parse text output. Format per kernel:
-        #   l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum       Mbyte       301.99
-        # Fields: metric_name  unit  value  →  unit=$(NF-1)  val=$NF
-        TOTAL_READ=$(echo "$RAW" | grep "op_ld.sum" | awk '{
+        # Parse: sum reads across all kernels (handles Mbyte/Kbyte/byte)
+        TOTAL_READ=$(grep "op_ld.sum" "$TMPF" | awk '{
             val=$NF; unit=$(NF-1);
             if(unit=="Kbyte") val=val/1024;
             if(unit=="byte") val=val/1048576;
             sum+=val} END{printf "%.2f",sum}')
 
-        TOTAL_WRITE=$(echo "$RAW" | grep "op_st.sum" | awk '{
+        TOTAL_WRITE=$(grep "op_st.sum" "$TMPF" | awk '{
             val=$NF; unit=$(NF-1);
             if(unit=="Kbyte") val=val/1024;
             if(unit=="byte") val=val/1048576;
@@ -48,6 +47,7 @@ for N in "${SEQ_LENS[@]}"; do
     done
 done
 
+rm -f "$TMPF"
 echo ""
 echo "Saved → $OUT"
 cat "$OUT"
