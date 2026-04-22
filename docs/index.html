@@ -92,47 +92,72 @@
   <div class="container">
     <div class="section-tag">Background</div>
     <h2>Why Attention is Memory-Bound</h2>
-    <p>
-      The core operation in Transformers is <strong>scaled dot-product attention</strong>:
-    </p>
+    
+    <div class="blog-text">
+      The core mechanism inside modern Large Language Models (like GPT or Llama) is the <strong>scaled dot-product attention</strong> operation. Before we optimize it, we must first understand the fundamental mathematical operations it requires:
+    </div>
+
     <div class="math-block">
       $$\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d}}\right)V$$
     </div>
-    <p>
-      where $Q, K, V \in \mathbb{R}^{N \times d}$. The naive implementation materialises the
-      <em>full</em> $N \times N$ score matrix $S = QK^\top / \sqrt{d}$ in HBM (GPU DRAM), reads it
-      back for softmax, and reads it again to compute $PV$. This incurs
-      $\Theta(N^2)$ HBM reads and writes, making it <strong>memory-bandwidth–limited</strong>
-      even for modest sequence lengths.
-    </p>
 
-    <div class="cards-row">
+    <div class="blog-text">
+      In this equation, $Q$, $K$, and $V$ are matrices of shape $N \times d$, where $N$ is the sequence length (how many tokens the model is looking at) and $d$ is the head dimension. 
+    </div>
+
+    <h3 class="blog-heading">The Standard (Naive) Implementation</h3>
+    <div class="blog-text">
+      The standard way to execute this formula on a GPU requires computing it step-by-step and saving the intermediate results to the GPU's main memory, known as High-Bandwidth Memory (HBM). The process looks like this:
+    </div>
+    
+    <ul class="blog-list">
+      <li><strong>Step 1: Compute the scores.</strong> Multiply $Q$ and $K^\top$ to calculate an $N \times N$ matrix called $S$. This massive matrix must be written entirely to the HBM.</li>
+      <li><strong>Step 2: Apply the Softmax.</strong> Read the entire matrix $S$ back from HBM, apply the Softmax function row-by-row to compute probabilities $P$, and write $P$ back to HBM.</li>
+      <li><strong>Step 3: Compute the output.</strong> Read $P$ from HBM a final time, multiply it by $V$, and write the final output $O$ to HBM.</li>
+    </ul>
+
+    <div class="blog-text">
+      <strong>The Bottleneck:</strong> Notice how many times we had to read and write an $N \times N$ matrix to the GPU's memory. As the sequence length $N$ grows (e.g., passing a long document to the model), the memory footprint balloons quadratically ($\Theta(N^2)$). The GPU's compute cores end up idling, waiting for slow memory transfers to finish. This is known as a <strong>memory-bound</strong> algorithm.
+    </div>
+
+    <h3 class="blog-heading">The FlashAttention Solution: Tiling and Kernel Fusion</h3>
+    <div class="blog-text">
+      FlashAttention solves this memory bandwidth bottleneck without sacrificing exactness using two core classical hardware optimizations:
+    </div>
+    
+    <ul class="blog-list">
+      <li><strong>Loop Tiling:</strong> Instead of processing the entire $N \times N$ matrix at once, we slice the $Q, K, V$ matrices into smaller blocks (tiles). We load a small block from global memory into the SM's ultra-fast, on-chip Shared Memory (SRAM) and compute the attention scores for just that block at a time.</li>
+      <li><strong>Kernel Fusion:</strong> Instead of launching three separate operations (score calculation, softmax, and output multiplication) and ping-ponging the intermediate data to global memory, we fuse them into a single GPU kernel. For a given tile, we compute the dot product, apply a sliding softmax, and multiply it by $V$ <em>while the numerical data is still inside the processor registers</em>. We only write the final output vector $O$ back to global memory once.</li>
+    </ul>
+
+    <div class="cards-row" style="margin-top: 2rem;">
       <div class="card card-red">
         <div class="card-icon">🐌</div>
         <h3>Naive Attention</h3>
-        <p>3 kernel launches, 3+ HBM round-trips for the $N\times N$ matrix.</p>
-        <div class="card-stat">$\mathcal{O}(N^2)$ HBM bytes</div>
+        <p>3 distinct kernel launches. Requires 3 full round-trips to global memory for the massive $N\times N$ matrix.</p>
+        <div class="card-stat">$\mathcal{O}(N^2)$ HBM Accesses</div>
       </div>
       <div class="card card-green">
         <div class="card-icon">⚡</div>
         <h3>FlashAttention</h3>
-        <p>Tiles Q, K, V into SRAM. $N\times N$ matrix <em>never</em> leaves the chip.</p>
-        <div class="card-stat">$\mathcal{O}(N \cdot d)$ HBM bytes</div>
+        <p>Fuses the operations into one kernel. Keeps the $\mathcal{O}(N^2)$ matrix inside fast on-chip SRAM.</p>
+        <div class="card-stat">$\mathcal{O}(N \cdot d)$ HBM Accesses</div>
       </div>
     </div>
 
-    <h3 class="subsection-title">Hardware: NVIDIA Tesla T4 (Turing, sm_75)</h3>
-    <div class="spec-table">
-      <div class="spec-row"><span>HBM Bandwidth</span><strong>320 GB/s</strong></div>
-      <div class="spec-row"><span>SRAM per SM</span><strong>64 KB shared memory</strong></div>
-      <div class="spec-row"><span>FP32 Throughput</span><strong>8.1 TFLOP/s</strong></div>
-      <div class="spec-row"><span>Registers / SM</span><strong>65 536</strong></div>
+    <h3 class="subsection-title" style="margin-top: 3rem;">Hardware Limits: NVIDIA Tesla T4</h3>
+    <div class="blog-text">
+      To understand why keeping data on-chip is so vital, let's look at the hardware specs of the GPU we are optimizing for. The Tesla T4 Streaming Multiprocessors (SMs) have incredibly fast compute, but we are severely limited by memory bandwidth.
     </div>
-    <p>
-      For $d = 64$, our tile sizes $B_r = B_c = 32$ occupy
-      $(B_r + 2B_c)\cdot d \cdot 4 = 24\,576$ B = <strong>24 KB</strong> — comfortably within
-      the 48 KB limit.
-    </p>
+    <div class="spec-table">
+      <div class="spec-row"><span>Global Memory (HBM) Bandwidth</span><strong>320 GB/s</strong></div>
+      <div class="spec-row"><span>On-Chip Shared Memory (SRAM) Capacity</span><strong>64 KB per SM</strong></div>
+      <div class="spec-row"><span>Compute (FP32) Throughput</span><strong>8.1 TFLOP/s</strong></div>
+    </div>
+    
+    <div class="blog-text">
+      By keeping our processing chunks (tiles) small enough to fit inside that <strong>64 KB</strong> SRAM limit, FlashAttention never has to write the intermediate $N \times N$ matrix to the slow 320 GB/s HBM. It all stays on the ultra-fast chip.
+    </div>
   </div>
 </section>
 
@@ -142,31 +167,55 @@
     <div class="section-tag">Algorithm</div>
     <h2>Online Softmax &amp; Tiling</h2>
 
-    <h3 class="subsection-title">Online Softmax</h3>
-    <p>
-      Standard softmax requires two passes over a row: one to find the max $m$, one to
-      exponentiate &amp; normalise. With tiling we can't afford to see the whole row at once.
-      The key insight is that the denominator can be <em>updated incrementally</em>:
-    </p>
+    <div class="blog-text">
+      To keep the matrix entirely on-chip, we must split it into smaller blocks (tiles). However, this introduces a major mathematical challenge: the Softmax function.
+    </div>
+
+    <h3 class="blog-heading">The Softmax Constraint</h3>
+    <div class="blog-text">
+      Mathematically, Softmax normalizes a set of numbers (a row of matrix scores). In hardware, computers have limited 32-bit floating-point precision, so to prevent numerical overflow, we subtract the maximum value of the row ($m$) before doing the exponential calculations:
+    </div>
+
+    <div class="math-block">
+      $$ \text{softmax}(x_i) = \frac{e^{x_i - m}}{\sum_{j} e^{x_j - m}} $$
+    </div>
+    
+    <div class="blog-text">
+      The paradox is that to find the global maximum value $m$, we must look at <em>every element</em> in the row simultaneously. Because we are aggressively tiling the matrix to fit into small 64 KB SRAM chunks, we don't have access to the entire row at once! We only see a small piece of it at a time.
+    </div>
+
+    <h3 class="blog-heading">The Solution: Online Softmax</h3>
+    <div class="blog-text">
+      The key innovation of FlashAttention is using algebraic tricks to update the Softmax denominator incrementally as new tiles arrive. We keep track of a moving local maximum ($m$) and a local normalization sum ($\ell$) directly within the ultra-fast thread registers. 
+      <br><br>
+      As each new tile $j$ arrives from Global Memory, we update the local max $m^{(j)}$:
+    </div>
+
     <div class="math-block">
       $$m^{(j)}_i = \max\!\bigl(m^{(j-1)}_i,\; \tilde{m}_{ij}\bigr)$$
     </div>
-    <div class="math-block">
-      $$\ell^{(j)}_i = e^{m^{(j-1)}_i - m^{(j)}_i}\,\ell^{(j-1)}_i
-                     + e^{\tilde{m}_{ij} - m^{(j)}_i}\,\tilde{\ell}_{ij}$$
-    </div>
-    <div class="math-block">
-      $$O^{(j)}_i = \underbrace{e^{m^{(j-1)}_i - m^{(j)}_i}}_{\alpha}\,O^{(j-1)}_i
-                  + \underbrace{e^{\tilde{m}_{ij} - m^{(j)}_i}}_{\beta}\,\tilde{P}_{ij}V_j$$
-    </div>
-    <p>
-      After all $T_c$ K/V tiles: $O_i \leftarrow O_i / \ell^{(T_c)}_i$.
-      The running state $(m_i, \ell_i, O_i)$ lives entirely in registers — <strong>no HBM writes
-      for intermediate results.</strong>
-    </p>
 
-    <h3 class="subsection-title">Step-Through Animation</h3>
-    <p class="anim-desc">Watch a single Q tile ($i=0$) iterate over all K/V tiles. Click <strong>Next Step</strong> to advance.</p>
+    <div class="blog-text">
+      We then update the local sum denominator $\ell^{(j)}$ and immediately apply it to the output $O^{(j)}$. Notice the scaling factors $\alpha$ and $\beta$:
+    </div>
+
+    <div class="math-block">
+      $$\ell^{(j)}_i = \underbrace{e^{m^{(j-1)}_i - m^{(j)}_i}}_{\alpha}\,\ell^{(j-1)}_i
+                     + \underbrace{e^{\tilde{m}_{ij} - m^{(j)}_i}}_{\beta}\,\tilde{\ell}_{ij}$$
+    </div>
+    <div class="math-block">
+      $$O^{(j)}_i = \alpha \,O^{(j-1)}_i + \beta \,\tilde{P}_{ij}V_j$$
+    </div>
+
+    <div class="blog-text">
+      By scaling the previous output by $\alpha$, we mathematically correct the old numbers <em>as if</em> we had always known the true global maximum $m$. 
+      The running state $(m_i, \ell_i, O_i)$ lives strictly inside the GPU registers. <strong>This completely eliminates the need to write intermediate results to slow global memory footprint.</strong>
+    </div>
+
+    <h3 class="blog-heading" style="margin-top: 4rem;">Hardware Execution Trace</h3>
+    <div class="blog-text">
+      Observe how a single Query tile ($Q_i$) remains stationary in SRAM while iterating over the Key/Value tiles ($K_j, V_j$). Click <strong>Next Step</strong> to advance the hardware simulation.
+    </div>
 
     <!-- HPC Tile animation -->
     <div class="hpc-viz" id="tileViz">
@@ -253,30 +302,35 @@
 <section id="results" class="section">
   <div class="container">
     <div class="section-tag">Results</div>
-    <h2>Benchmark Results</h2>
-    <p>
-      All experiments run on an NVIDIA Tesla T4 (sm_75), $d = 64$,
-      averaged over 20 iterations with 5 warmup runs.
-      HBM traffic measured with NVIDIA Nsight Compute (NCU).
-    </p>
+    <h2>Empirical Benchmark Evaluation</h2>
+    
+    <div class="blog-text">
+      To prove that FlashAttention successfully avoids the memory wall, I ran empirical benchmarks measuring both the execution latency and the physical global memory bandwidth usage. The experiments were executed natively using CUDA C++ on an NVIDIA Tesla T4 GPU (sm_75 architecture) with a head dimension of $d = 64$. 
+      <br><br>
+      The hardware memory traffic was profiled directly using NVIDIA Nsight Compute (NCU).
+    </div>
 
     <div class="chart-grid">
       <div class="chart-card">
-        <h3>Latency (ms) vs Sequence Length</h3>
+        <h3>Execution Latency (ms) vs Sequence Length</h3>
         <img src="assets/latency_plot.png" alt="Latency Plot" style="width: 100%; height: auto; border-radius: 8px;">
       </div>
       <div class="chart-card">
-        <h3>HBM Traffic (MB) vs Sequence Length</h3>
+        <h3>HBM Traffic (Total MB) vs Sequence Length</h3>
         <img src="assets/hbm_plot.png" alt="HBM Plot" style="width: 100%; height: auto; border-radius: 8px;">
       </div>
     </div>
 
-    <div class="result-callout">
+    <div class="blog-text" style="margin-top: 3rem;">
+      <strong>The Hardware Bottleneck Visualized:</strong> Look at the red bar in the right-hand HBM Traffic plot. As the sequence length $N$ increases from 512 to 8192, the Naive implementation explodes quadratically because it forces the GPU to write the massive $N \times N$ matrix to global memory. By contrast, FlashAttention (the blue bar) scales linearly, resulting in massive speedups.
+    </div>
+
+    <div class="result-callout" style="margin-top: 1rem;">
       <div class="callout-icon">📈</div>
       <div>
         <strong>At N = 4096:</strong> FlashAttention is <span>~1.8×</span> faster
         and triggers a <span>~138×</span> reduction in global memory writes compared to the naive baseline.
-        The speedup grows with sequence length, consistent with the $O(N)$ vs $O(N^2)$ algorithmic traffic model.
+        The speedup directly correlates with overcoming the $O(N^2)$ memory bandwidth limit.
       </div>
     </div>
   </div>
@@ -286,15 +340,15 @@
 <section id="code" class="section section-dark">
   <div class="container">
     <div class="section-tag">Implementation</div>
-    <h2>Kernel Comparison</h2>
-    <p>
-      Toggle between the <span class="tag-naive">naive</span> three-kernel baseline
-      and the <span class="tag-flash">FlashAttention</span> tiled kernel.
-      The fundamental difference: naive writes $S \in \mathbb{R}^{N \times N}$ to HBM;
-      flash keeps everything in SRAM registers.
-    </p>
+    <h2>Hardware-Aware CUDA Code</h2>
+    
+    <div class="blog-text">
+      If you examine the raw CUDA C++ implementations below, the architectural differences become instantly obvious. 
+      <br><br>
+      The <span class="tag-naive">Naive Softmax</span> kernel forces the programmer to iterate over the array three separate times, issuing a slow global memory read (from pointer <code>float* S</code>) on every single pass. Conversely, the <span class="tag-flash">FlashAttention</span> kernel computes the Softmax in a single pass, keeping the running totals entirely inside the local register file variables (<code>m_i</code>, <code>l_i</code>), which are physically located on the processing core itself.
+    </div>
 
-    <div class="code-tabs">
+    <div class="code-tabs" style="margin-top: 2rem;">
       <button class="tab-btn active" onclick="showTab('naive')">Naive Softmax Kernel</button>
       <button class="tab-btn"        onclick="showTab('flash')">Flash Attention Kernel</button>
     </div>

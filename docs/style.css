@@ -575,6 +575,44 @@ strong { color: #fff; }
 }
 .callout-icon { font-size: 1.6rem; flex-shrink: 0; }
 
+/* ── BLOG TEXT FORMATTING ──────────────────────────────────────────────── */
+.blog-text {
+  max-width: 800px;
+  margin: 0 auto 1.5rem auto;
+  line-height: 1.8;
+  font-size: 1.1rem;
+  color: #d1d5db;
+}
+.blog-text strong {
+  color: #fff;
+}
+.blog-heading {
+  max-width: 800px;
+  margin: 2.5rem auto 1rem auto;
+  font-size: 1.5rem;
+  color: #fff;
+  font-weight: 700;
+}
+.blog-list {
+  max-width: 760px;
+  margin: 0 auto 2rem auto;
+  padding-left: 1.5rem;
+  line-height: 1.8;
+  font-size: 1.1rem;
+  color: #d1d5db;
+}
+.blog-list li {
+  margin-bottom: 0.8rem;
+}
+
+.math-block {
+  max-width: 800px;
+  margin: 1.5rem auto;
+  overflow-x: auto;
+  padding: 1rem 0;
+  text-align: center;
+}
+
 /* ── CODE TABS ─────────────────────────────────────────────────────────── */
 .code-tabs {
   display: flex;
