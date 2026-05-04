@@ -23,6 +23,27 @@ __global__ void qkt_kernel(const float* __restrict__ Q,
     S[row * N + col] = acc * rsqrtf((float)d);
 }
 
+// Causal QK^T: masked positions set to large negative so softmax ≈ 0
+__global__ void qkt_kernel_causal(const float* __restrict__ Q,
+                                   const float* __restrict__ K,
+                                   float*       __restrict__ S,
+                                   int N, int d) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= N || col >= N) return;
+
+    if (col > row) {
+        S[row * N + col] = -1e30f;
+        return;
+    }
+
+    float acc = 0.0f;
+    for (int k = 0; k < d; ++k)
+        acc += Q[row * d + k] * K[col * d + k];
+
+    S[row * N + col] = acc * rsqrtf((float)d);
+}
+
 // Kernel 2: in-place row-wise numerically stable softmax on S
 __global__ void softmax_kernel(float* __restrict__ S, int N) {
     int row = blockIdx.x * blockDim.x + threadIdx.x;
@@ -64,7 +85,7 @@ __global__ void pv_kernel(const float* __restrict__ P,
     O[row * d + col] = acc;
 }
 
-// ── Public entry point ─────────────────────────────────────────────────────
+// ── Public entry points ────────────────────────────────────────────────────
 void naive_attention(const float* dQ, const float* dK, const float* dV,
                      float* dO, float* dS, int N, int d) {
     // Kernel 1: QK^T / sqrt(d)
@@ -78,6 +99,23 @@ void naive_attention(const float* dQ, const float* dK, const float* dV,
     softmax_kernel<<<grd2, blk2>>>(dS, N);
 
     // Kernel 3: P @ V
+    dim3 blk3(16, 16);
+    dim3 grd3((d + 15) / 16, (N + 15) / 16);
+    pv_kernel<<<grd3, blk3>>>(dS, dV, dO, N, d);
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+}
+
+void naive_attention_causal(const float* dQ, const float* dK, const float* dV,
+                            float* dO, float* dS, int N, int d) {
+    dim3 blk1(16, 16);
+    dim3 grd1((N + 15) / 16, (N + 15) / 16);
+    qkt_kernel_causal<<<grd1, blk1>>>(dQ, dK, dS, N, d);
+
+    int blk2 = 256;
+    int grd2  = (N + blk2 - 1) / blk2;
+    softmax_kernel<<<grd2, blk2>>>(dS, N);
+
     dim3 blk3(16, 16);
     dim3 grd3((d + 15) / 16, (N + 15) / 16);
     pv_kernel<<<grd3, blk3>>>(dS, dV, dO, N, d);

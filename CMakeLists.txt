@@ -11,6 +11,9 @@ add_executable(flash_attn
     src/main.cu
     src/naive_attention.cu
     src/flash_attention_v1.cu
+    src/flash_attention_v1_causal.cu
+    src/flash_attention_v2.cu
+    src/flash_attention_v3_wmma.cu
 )
 
 target_include_directories(flash_attn PRIVATE src)

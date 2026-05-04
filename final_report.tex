@@ -1,0 +1,160 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{placeins}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=blue,
+}
+
+\title{ME 759 Final Project Report\\ \Large FlashAttention in Raw CUDA}
+\author{Gaurav Batra \\ \href{mailto:gbatra3@wisc.edu}{gbatra3@wisc.edu} \\ \textit{Computer Science (MS)}}
+\date{May 3, 2026}
+
+\begin{document}
+
+\maketitle
+
+\vspace{-1.5em}
+\begin{center}
+    \textbf{Project Repository:} \url{https://github.com/batra98/me759-flashattention} \\
+    \vspace{0.3em}
+    \textbf{Interactive Educational Report:} \url{https://batra98.github.io/me759-flashattention}
+\end{center}
+\vspace{1em}
+
+\begin{abstract}
+Standard Transformer attention has $O(N^2)$ \emph{memory traffic} when the $N \times N$ score matrix is materialized in HBM. This project implements a FlashAttention-style forward pass in bare CUDA for an NVIDIA Tesla T4 (Turing, sm\_75), starting from a three-kernel naive baseline and adding a sequence of increasingly hardware-aware variants: shared-memory tiling with online softmax, causal masking for autoregressive attention, a warp-shuffle \mbox{row-wise} implementation, a Tensor Core (WMMA) matmul path with FP32 softmax state, and a double-buffering entry point that (on sm\_75) documents the lack of a separate async-copy win versus the WMMA kernel. Measurements combine \texttt{cudaEvent} latency sweeps and Nsight Compute global-byte counters; RMSE checks tie custom kernels to naive references.
+\end{abstract}
+
+\section{Introduction and Motivation}
+Transformer inference is often bandwidth-bound: moving partial attention tensors through HBM wastes energy and time compared with compute~\cite{dao2022}. Implementing FlashAttention from scratch clarifies how tiling, softmax fusion, and structured reductions interact with the memory hierarchy on commodity GPUs~\cite{dao2022,milakov2018}.
+
+\section{Hardware and Experimental Setup}
+Experiments target an NVIDIA Tesla T4 (Turing, sm\_75), CUDA via \texttt{nvcc}, CMake Release builds (\texttt{-O3}, \texttt{--extended-lambda}, \texttt{--expt-relaxed-constexpr}, \texttt{-lineinfo}). Timing uses GPU events with warmup iterations; HBM traffic aggregates NCU \texttt{l1tex\_\_t\_bytes\_pipe\_lsu\_mem\_global\_op\_\{ld,st\}.sum} metrics. Correctness compares each optimized kernel against an appropriate naive baseline (bidirectional or causal) using RMSE; FP16 Tensor Core paths allow RMSE up to $5 \times 10^{-3}$ versus FP32 references.
+
+\section{Baselines and Implementations}
+
+\subsection{Naive Three-Kernel Attention}
+We compute $S = Q K^\top / \sqrt{d}$, apply row softmax, then $O = \mathrm{softmax}(S) V$ as separate kernels. For causal experiments we mask forbidden positions with large negative logits before softmax (\texttt{naive\_attention\_causal}).
+
+\subsection{FlashAttention v1 (Tiled FP32)}
+\texttt{flash\_attention\_v1.cu} tiles $Q$, $K$, and $V$ in shared memory ($B_r=B_c=32$, $d=64$), maintains running softmax statistics $(m,\ell)$ per query row in registers, and never spills $S$ to HBM~\cite{dao2022,milakov2018}.
+
+\subsection{Causal Masking (\texttt{flash\_causal})}
+We skip entire $K/V$ column tiles once every query row in the block is ``to their left,'' and apply within-tile masking on diagonals so logits obey $j \le i$. This removes useless compute for upper-triangular regions without changing numerics where keys are valid.
+
+\subsection{Warp-Shuffle Row Variant (\texttt{flash\_v2})}
+\texttt{flash\_attention\_v2.cu} assigns one warp per query row ($B_r{=}8$, $B_c{=}32$, $256$ threads per block). Dot products reduce across lanes with \texttt{\_\_shfl\_down\_sync}; softmax normalization runs on lane~0 with weights staged through shared memory so PV accumulation stays coherent across warps.
+
+\subsection{Tensor Core Path (\texttt{flash\_wmma})}
+\texttt{flash\_attention\_v3\_wmma.cu} evaluates each $16{\times}16$ score tile using WMMA \texttt{m16n16k16} MMA on FP16 operands loaded from shared memory while softmax statistics remain FP32. Keys are packed into WMMA's column-major \texttt{matrix\_b} layout per $16$-column slice of $d{=}64$.
+
+\subsection{``Double Buffer'' Variant (\texttt{flash\_wmma\_db})}
+Ampere-style \texttt{cp.async} overlap is not assumed on Turing; \texttt{flash\_attention\_v3\_wmma\_db} currently dispatches the WMMA kernel so benchmarks quantify whether standalone pipelines materially improve throughput without rewriting kernel internals. On sm\_75 we expect parity---documented as a negative architectural result rather than a claimed speedup.
+
+\section{Evaluation}
+
+\subsection{Latency and Speedup}
+Figure~\ref{fig:latency} summarizes end-to-end timings across kernels bundled in \texttt{flash\_attn}; Figure~\ref{fig:speedup} plots ratios versus \texttt{naive}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.82\textwidth]{docs/assets/latency_plot.png}
+    \caption{Kernel latency vs.\ sequence length (regenerate from \texttt{benchmarks/results/timing.csv}).}
+    \label{fig:latency}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.82\textwidth]{docs/assets/speedup_plot.png}
+    \caption{Speedup relative to the naive three-kernel baseline.}
+    \label{fig:speedup}
+\end{figure}
+
+\subsection{HBM Traffic}
+Figure~\ref{fig:hbm} tracks NCU-reported global loads plus stores.
+Representative $N{=}4096$ snapshots from an earlier T4 sweep~\cite{benchsnapshot}: naive reads $\approx 25.8$\,GB / writes $\approx 1.16$\,GB; Flash v1 reads $\approx 2.21$\,GB / writes $\approx 8.39$\,MB---reads reduced $\approx 11.7\times$, writes $\approx 138\times$.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.82\textwidth]{docs/assets/hbm_plot.png}
+    \caption{Aggregate HBM traffic (log scale) across kernels.}
+    \label{fig:hbm}
+\end{figure}
+
+\subsection{Roofline Snapshot}
+Figure~\ref{fig:roofline} plots approximate attained TFLOP/s vs operational intensity using analytical $4 N^2 d$ FLOPs divided by NCU byte totals.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{docs/assets/roofline_plot.png}
+    \caption{Roofline-style diagnostic combining analytical FLOPs with measured traffic.}
+    \label{fig:roofline}
+\end{figure}
+
+\subsection{Discussion}
+\begin{itemize}
+    \item \textbf{Memory vs compute:} FlashAttention removes the dominant quadratic HBM footprint; further gains hinge on instruction throughput (warp specialization, Tensor Cores).
+    \item \textbf{Causal masking:} Provides nearly ``free'' flops reductions whenever sequences exceed tile width because wasted tiles never enter softmax normalization.
+    \item \textbf{Turing Tensor Cores:} FP16 WMMA paths demand careful packing but unlock sustained throughput beyond FP32 scalar lanes for matmul-heavy slices.
+    \item \textbf{Async copies on sm\_75:} Without Ampere-style \texttt{cp.async}, overlapping loads rarely beats careful synchronous tiling when kernels remain latency-bound on softmax bookkeeping.
+\end{itemize}
+
+\section{Future Work}
+Ring-style sequence parallelism across GPUs (NCCL/MPI), KV-cache--aware kernels for incremental decoding, and FlashAttention-2/3 scheduling strategies remain logical extensions beyond single-GPU scope~\cite{dao2022}.
+
+\section{Interactive Artifact}
+The GitHub Pages visualization retains SRAM tiling explanations alongside downloadable CUDA sources~\cite{pages}.
+
+\section*{Reproducibility}
+\begin{lstlisting}[language=bash,basicstyle=\ttfamily\small]
+mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j
+./flash_attn --mode correctness --target flash_wmma --seq_len 1024
+benchmarks/run_bench.sh ./flash_attn ./benchmarks/results
+sudo benchmarks/run_ncu_profile.sh ./flash_attn ./benchmarks/results/hbm_traffic.csv
+python3 python/plot_results.py
+\end{lstlisting}
+
+\begin{thebibliography}{9}
+
+\bibitem{dao2022}
+Dao, T., Fu, D. Y., Ermon, S., Rudra, A., \& Ré, C. (2022).
+\textit{FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness.}
+NeurIPS 2022. \url{https://arxiv.org/abs/2205.14135}
+
+\bibitem{vaswani2017}
+Vaswani, A. et al. (2017).
+\textit{Attention Is All You Need.}
+NeurIPS 2017. \url{https://arxiv.org/abs/1706.03762}
+
+\bibitem{milakov2018}
+Milakov, M. \& Gimelshein, N. (2018).
+\textit{Online normalizer calculation for softmax.}
+arXiv preprint. \url{https://arxiv.org/abs/1805.02867}
+
+\bibitem{nvidia_wmma}
+NVIDIA.
+\textit{CUDA C++ Programming Guide: Warp Matrix Functions (WMMA).}
+\url{https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#warp-matrix-functions}
+
+\bibitem{benchsnapshot}
+Benchmark CSVs checked into \texttt{benchmarks/results/} capture representative Tesla~T4 sweeps used in plots.
+
+\bibitem{pages}
+Interactive site: \url{https://batra98.github.io/me759-flashattention}.
+
+\end{thebibliography}
+
+\end{document}
