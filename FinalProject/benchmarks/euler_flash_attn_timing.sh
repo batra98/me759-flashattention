@@ -12,7 +12,8 @@
 #SBATCH --error=slurm-%j.err
 #
 # UW CSL Euler: build + timing sweep (no NCU). From FinalProject/: sbatch benchmarks/euler_flash_attn_timing.sh
-# CUDA 12.2 nvcc accepts host GCC <= 12 — use gnu12, not gnu15. Edit versions via: module spider gnu12
+# engr Euler exposes gnu15 (GCC 15), not gnu12; CUDA 12.2 nvcc officially allows GCC<=12, so CMake passes
+# -allow-unsupported-compiler. If the site adds gcc<=12 modules later, switch compiler and drop that flag.
 
 set -eu
 setopt PIPE_FAIL
@@ -55,7 +56,7 @@ fi
 [[ -f /usr/share/lmod/lmod/init/zsh ]] && ! whence module >/dev/null 2>&1 && source /usr/share/lmod/lmod/init/zsh
 
 module purge 2>/dev/null || true
-module load gnu12/12.3.0
+module load gnu15/15.1.0
 module load nvidia/cuda/12.2.0
 module load cmake/4.1.2
 
@@ -83,7 +84,8 @@ cmake "${ROOT}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DFLASHATTN_CUDA_ARCH="${FLASHATTN_CUDA_ARCH}" \
   -DCMAKE_CUDA_COMPILER="$(command -v nvcc)" \
-  -DCMAKE_CXX_COMPILER="$(command -v g++)"
+  -DCMAKE_CXX_COMPILER="$(command -v g++)" \
+  -DCMAKE_CUDA_FLAGS=-allow-unsupported-compiler
 
 make -j"${SLURM_CPUS_PER_TASK:-4}"
 
