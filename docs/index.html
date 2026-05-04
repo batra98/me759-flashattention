@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FlashAttention CUDA — ME759 Project</title>
+  <title>FlashAttention in CUDA (ME759)</title>
   <meta name="description" content="A bare-metal CUDA implementation of FlashAttention with online softmax and shared-memory tiling, demonstrating O(N) HBM traffic vs O(N²) for naive attention." />
 
   <!-- KaTeX -->
@@ -30,6 +30,8 @@
 </head>
 <body>
 
+<div id="scroll-progress" class="scroll-progress" aria-hidden="true"></div>
+
 <!-- ─────────────────────── HERO ─────────────────────────────────────────── -->
 <header class="hero">
   <div class="hero-glow"></div>
@@ -37,8 +39,15 @@
     <div class="hero-badge">ME 759 · High-Performance Computing</div>
     <h1>FlashAttention<br><span class="gradient-text">in Raw CUDA</span></h1>
     <p class="hero-sub">
-      A bare-metal implementation of IO-aware attention on an NVIDIA Tesla T4 —
-      online softmax, shared-memory tiling, and <strong>O(N)</strong> HBM traffic.
+      From-scratch CUDA: IO-aware FlashAttention on a Tesla T4, with online softmax,
+      shared-memory tiling, and <strong>O(N)</strong> HBM traffic to the output instead of materializing the full $N^2$ scores.
+    </p>
+    <p class="hero-kpi">
+      <span class="hero-kpi-label">Causal Flash vs naive</span>
+      <span id="hero-n-label" class="hero-kpi-n">N=8192</span>
+      <span class="hero-kpi-sep">→</span>
+      <span id="hero-speedup" class="hero-kpi-val">×3.71</span>
+      <span class="hero-kpi-hint">pick a different <code>N</code> in the lab to update this</span>
     </p>
     <div class="hero-links">
       <a href="https://github.com/batra98/me759-flashattention" class="btn-primary" target="_blank">
@@ -47,6 +56,9 @@
       </a>
       <a href="https://arxiv.org/abs/2205.14135" class="btn-secondary" target="_blank">
         Paper (Dao et al. 2022)
+      </a>
+      <a href="https://github.com/batra98/me759-flashattention/blob/main/final_report.tex" class="btn-secondary" target="_blank">
+        Final report (TeX)
       </a>
     </div>
   </div>
@@ -81,8 +93,10 @@
     <ul>
       <li><a href="#background">Background</a></li>
       <li><a href="#algorithm">Algorithm</a></li>
-      <li><a href="#results">Results</a></li>
-      <li><a href="#code">Code</a></li>
+      <li><a href="#results-lab">Lab</a></li>
+      <li><a href="#results">Figures</a></li>
+      <li><a href="#code">Implementation</a></li>
+      <li><a href="#deliverables">Repro</a></li>
     </ul>
   </div>
 </nav>
@@ -298,16 +312,94 @@
   </div>
 </section>
 
+<!-- ─────────────────────── INTERACTIVE LAB ─────────────────────────────── -->
+<section id="results-lab" class="section section-lab">
+  <div class="container">
+    <div class="section-tag">Interactive</div>
+    <h2>Benchmark laboratory</h2>
+    <p class="lab-lede">
+      This pulls from the same CSVs as the write-up. Choose <code>N</code>, flip kernel traces on or off, and use a log-scaled
+      latency axis so the <code>flash_v2</code> line does not flatten everything else.
+    </p>
+
+    <div class="chart-shell">
+      <canvas id="latencyChart" width="800" height="320" aria-label="Latency comparison chart"></canvas>
+    </div>
+    <p id="labSelectedN" class="lab-hint" role="status"></p>
+
+    <div class="lab-toolbar">
+      <div class="lab-toolbar-block">
+        <span class="lab-label">Sequence length <strong>N</strong></span>
+        <div class="n-pills" role="group" aria-label="Sequence length">
+          <button type="button" class="n-pill" data-n="512">512</button>
+          <button type="button" class="n-pill" data-n="1024">1k</button>
+          <button type="button" class="n-pill" data-n="2048">2k</button>
+          <button type="button" class="n-pill" data-n="4096">4k</button>
+          <button type="button" class="n-pill" data-n="8192">8k</button>
+        </div>
+      </div>
+      <div class="lab-toolbar-block lab-toolbar-wide">
+        <span class="lab-label">Show on chart</span>
+        <div class="kernel-chips" role="group" aria-label="Kernel traces">
+          <label class="kernel-chip"><input type="checkbox" value="naive" /> Naive</label>
+          <label class="kernel-chip"><input type="checkbox" value="naive_causal" /> Naive causal</label>
+          <label class="kernel-chip"><input type="checkbox" value="flash" /> Flash v1</label>
+          <label class="kernel-chip"><input type="checkbox" value="flash_causal" /> Flash causal</label>
+          <label class="kernel-chip"><input type="checkbox" value="flash_v2" /> Flash v2</label>
+          <label class="kernel-chip"><input type="checkbox" value="flash_wmma" /> WMMA</label>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="lab-cards-title">Live metrics at selected <span class="mono">N</span></h3>
+    <div class="metric-grid">
+      <div class="metric-card" data-metric-mode="naive">
+        <div class="metric-card-head"><span class="dot" style="background:#f87171"></span> Naive</div>
+        <div class="metric-row"><span>Latency</span><strong data-field="lat">…</strong></div>
+        <div class="metric-row"><span>HBM read</span><strong data-field="read">…</strong></div>
+        <div class="metric-row"><span>HBM write</span><strong data-field="write">…</strong></div>
+        <div class="metric-foot">baseline for speedup column</div>
+      </div>
+      <div class="metric-card" data-metric-mode="flash_causal">
+        <div class="metric-card-head"><span class="dot" style="background:#34d399"></span> Flash causal</div>
+        <div class="metric-row"><span>Latency</span><strong data-field="lat">…</strong></div>
+        <div class="metric-row"><span>HBM read</span><strong data-field="read">…</strong></div>
+        <div class="metric-row"><span>HBM write</span><strong data-field="write">…</strong></div>
+        <div class="metric-foot">speedup vs naive <strong data-field="speedup">…</strong></div>
+      </div>
+      <div class="metric-card" data-metric-mode="flash">
+        <div class="metric-card-head"><span class="dot" style="background:#818cf8"></span> Flash v1</div>
+        <div class="metric-row"><span>Latency</span><strong data-field="lat">…</strong></div>
+        <div class="metric-row"><span>HBM read</span><strong data-field="read">…</strong></div>
+        <div class="metric-row"><span>HBM write</span><strong data-field="write">…</strong></div>
+        <div class="metric-foot">speedup vs naive <strong data-field="speedup">…</strong></div>
+      </div>
+      <div class="metric-card" data-metric-mode="flash_wmma">
+        <div class="metric-card-head"><span class="dot" style="background:#fbbf24"></span> WMMA</div>
+        <div class="metric-row"><span>Latency</span><strong data-field="lat">…</strong></div>
+        <div class="metric-row"><span>HBM read</span><strong data-field="read">…</strong></div>
+        <div class="metric-row"><span>HBM write</span><strong data-field="write">…</strong></div>
+        <div class="metric-foot">speedup vs naive <strong data-field="speedup">…</strong></div>
+      </div>
+      <div class="metric-card metric-card-wide" data-metric-mode="flash_v2">
+        <div class="metric-card-head"><span class="dot" style="background:#e879f9"></span> Flash v2 (experiment)</div>
+        <div class="metric-row"><span>Latency</span><strong data-field="lat">…</strong></div>
+        <div class="metric-row"><span>HBM read</span><strong data-field="read">…</strong></div>
+        <div class="metric-row"><span>HBM write</span><strong data-field="write">…</strong></div>
+        <div class="metric-foot">speedup vs naive <strong data-field="speedup">…</strong> · NCU shows ~2× K/V streaming vs v1</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ─────────────────────── RESULTS ──────────────────────────────────────── -->
 <section id="results" class="section">
   <div class="container">
-    <div class="section-tag">Results</div>
+    <div class="section-tag">Figures</div>
     <h2>Empirical Benchmark Evaluation</h2>
     
     <div class="blog-text">
-      To prove that FlashAttention successfully avoids the memory wall, I ran empirical benchmarks measuring both the execution latency and the physical global memory bandwidth usage. The experiments were executed natively using CUDA C++ on an NVIDIA Tesla T4 GPU (sm_75 architecture) with a head dimension of $d = 64$. 
-      <br><br>
-      The hardware memory traffic was profiled directly using NVIDIA Nsight Compute (NCU).
+      I timed kernels and read back global load/store bytes with NCU. Everything here is CUDA C++ on a Tesla T4 (sm_75) with head size $d = 64$, same as the report.
     </div>
 
     <div class="chart-grid">
@@ -322,7 +414,7 @@
     </div>
 
     <div class="blog-text" style="margin-top: 3rem;">
-      <strong>The Hardware Bottleneck Visualized:</strong> Look at the red bar in the right-hand HBM Traffic plot. As the sequence length $N$ increases from 512 to 8192, the Naive implementation explodes quadratically because it forces the GPU to write the massive $N \times N$ matrix to global memory. By contrast, FlashAttention (the blue bar) scales linearly, resulting in massive speedups.
+      <strong>What to notice:</strong> in the HBM plot, naive traffic blows up with $N$ because it writes the whole score matrix. Flash stays closer to linear because it never parks that matrix in HBM.
     </div>
 
     <div class="result-callout" style="margin-top: 1rem;">
@@ -330,32 +422,104 @@
       <div>
         <strong>At N = 4096:</strong> FlashAttention is <span>~1.8×</span> faster
         and triggers a <span>~138×</span> reduction in global memory writes compared to the naive baseline.
-        The speedup directly correlates with overcoming the $O(N^2)$ memory bandwidth limit.
+        That lines up with dropping the $O(N^2)$ write to global memory.
       </div>
     </div>
   </div>
 </section>
 
-<!-- ─────────────────────── CODE ─────────────────────────────────────────── -->
+<!-- ─────────────────────── IMPLEMENTATION ───────────────────────────── -->
 <section id="code" class="section section-dark">
   <div class="container">
     <div class="section-tag">Implementation</div>
-    <h2>Hardware-Aware CUDA Code</h2>
+    <h2>Kernels &amp; code</h2>
     
     <div class="blog-text">
-      If you examine the raw CUDA C++ implementations below, the architectural differences become instantly obvious. 
-      <br><br>
-      The <span class="tag-naive">Naive Softmax</span> kernel forces the programmer to iterate over the array three separate times, issuing a slow global memory read (from pointer <code>float* S</code>) on every single pass. Conversely, the <span class="tag-flash">FlashAttention</span> kernel computes the Softmax in a single pass, keeping the running totals entirely inside the local register file variables (<code>m_i</code>, <code>l_i</code>), which are physically located on the processing core itself.
+      Each row in the lab matches one of these paths. Expand a card for the story; dot colors match the chart. Below that is a side-by-side taste of CUDA: <span class="tag-naive">naive softmax</span> hammering HBM vs <span class="tag-flash">Flash</span> keeping state in registers. Full sources live on GitHub and in the TeX report.
     </div>
 
-    <div class="code-tabs" style="margin-top: 2rem;">
-      <button class="tab-btn active" onclick="showTab('naive')">Naive Softmax Kernel</button>
-      <button class="tab-btn"        onclick="showTab('flash')">Flash Attention Kernel</button>
-    </div>
+        <div class="kernel-grid">
+      <article class="kernel-card">
+        <button type="button" class="kernel-card-toggle" aria-expanded="false">
+          <span class="kc-dot" style="background:#f87171"></span>
+          <span class="kc-title">Naive three-kernel path</span>
+          <span class="kc-chevron" aria-hidden="true">▼</span>
+        </button>
+        <p class="kc-summary">Writes full $S=QK^\top/\sqrt{d}$, softmax, then $PV$. Correct reference, worst IO.</p>
+        <div class="kc-body">
+          <p>Three launches mean the big score matrix ping-pongs through HBM. NCU tells that story in gigabytes.</p>
+        </div>
+      </article>
 
-    <div id="tab-naive" class="code-panel active">
-      <pre><code class="language-cuda">// ── Kernel 2: row-wise softmax (in HBM) ──────────────────────────────────
-// Reads and writes the full N×N matrix S — O(N²) HBM traffic
+      <article class="kernel-card">
+        <button type="button" class="kernel-card-toggle" aria-expanded="false">
+          <span class="kc-dot" style="background:#818cf8"></span>
+          <span class="kc-title">FlashAttention v1 (tiled FP32)</span>
+          <span class="kc-chevron" aria-hidden="true">▼</span>
+        </button>
+        <p class="kc-summary">Fixed $(B_r,B_c,d)$ tiles, fused softmax in registers, writes only $O$.</p>
+        <div class="kc-body">
+          <p>Online softmax rescaling keeps running $(m_i,\ell_i,O_i)$ in the register file while streaming $K_j,V_j$ tiles. This is the core IO win over naive.</p>
+        </div>
+      </article>
+
+      <article class="kernel-card">
+        <button type="button" class="kernel-card-toggle" aria-expanded="false">
+          <span class="kc-dot" style="background:#34d399"></span>
+          <span class="kc-title">Causal FlashAttention</span>
+          <span class="kc-chevron" aria-hidden="true">▼</span>
+        </button>
+        <p class="kc-summary">Skips future $(K,V)$ tiles and masks on the diagonal. Fastest in my T4 numbers.</p>
+        <div class="kc-body">
+          <p>Not just masking logits. Skipping whole tiles means you never load K/V you will not use, so HBM reads drop by a lot compared to dense Flash at large $N$.</p>
+        </div>
+      </article>
+
+      <article class="kernel-card">
+        <button type="button" class="kernel-card-toggle" aria-expanded="false">
+          <span class="kc-dot" style="background:#e879f9"></span>
+          <span class="kc-title">Experimental v2 (warp-centric)</span>
+          <span class="kc-chevron" aria-hidden="true">▼</span>
+        </button>
+        <p class="kc-summary">Smaller $B_r$ sounded clever; it bought extra outer-loop passes. Honest miss.</p>
+        <div class="kc-body">
+          <p>When $B_r$ is half as wide you sweep the whole $K/V$ stream twice as often. NCU reads land near ~2× Flash v1, and wall clock goes past naive at big $N$. Lesson learned: fusion without the right tile shape still loses.</p>
+        </div>
+      </article>
+
+      <article class="kernel-card">
+        <button type="button" class="kernel-card-toggle" aria-expanded="false">
+          <span class="kc-dot" style="background:#fbbf24"></span>
+          <span class="kc-title">WMMA score path</span>
+          <span class="kc-chevron" aria-hidden="true">▼</span>
+        </button>
+        <p class="kc-summary">FP16 Tensor Core matmul for $QK^\top$ blocks with FP32 accumulators on sm_75.</p>
+        <div class="kc-body">
+          <p>Lowest global reads in the table, competitive latency on the non-causal path. Causal tile skipping is not fused here yet, so FP32 causal Flash still wins on pure ms in these runs.</p>
+        </div>
+      </article>
+
+      <article class="kernel-card kernel-card-note">
+        <div class="kc-note-inner">
+          <strong>Reproduce everything.</strong>
+          <p>Clone, build <code>flash_attn</code>, run <code>benchmarks/run_bench.sh</code> and <code>run_ncu_profile.sh</code>. The numbers in the lab above come from that same CSV pipeline.</p>
+          <a href="#deliverables" class="btn-secondary" style="margin-top:12px;display:inline-flex;">Jump to commands ↓</a>
+        </div>
+      </article>
+        </div>
+
+    <div class="code-compare">
+      <h3 class="impl-subheading">CUDA excerpts</h3>
+      <p class="impl-lede">Representative fragments (not whole translation units). Compare memory traffic vs register-resident softmax state.</p>
+
+      <div class="code-tabs">
+        <button type="button" class="tab-btn active" onclick="showTab('naive')">Naive softmax kernel</button>
+        <button type="button" class="tab-btn" onclick="showTab('flash')">FlashAttention rescale</button>
+      </div>
+
+      <div id="tab-naive" class="code-panel active">
+        <pre><code class="language-cuda">// Kernel 2: row-wise softmax (data lives in HBM)
+// Reads and writes the full N×N matrix S; O(N²) HBM traffic
 __global__ void softmax_kernel(float* S, int N) {
     int row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= N) return;
@@ -380,11 +544,11 @@ __global__ void softmax_kernel(float* S, int N) {
         row_ptr[j] *= inv;                   // read + write N floats to DRAM
 }
 // Total: ~4·N² float reads + ~2·N² float writes per softmax call</code></pre>
-    </div>
+      </div>
 
-    <div id="tab-flash" class="code-panel">
-      <pre><code class="language-cuda">// ── Online softmax rescale inside FlashAttention kernel ──────────────────
-// Runs entirely in registers — the N×N matrix never exists in HBM
+      <div id="tab-flash" class="code-panel">
+        <pre><code class="language-cuda">// Online softmax rescale inside FlashAttention
+// Runs in registers; the full N×N matrix never exists in HBM
 for (int j = 0; j &lt; Tc; ++j) {
     // ... load K_j, V_j tiles into SRAM ...
 
@@ -405,7 +569,7 @@ for (int j = 0; j &lt; Tc; ++j) {
         l_tilde  += S_row[jj];
     }
 
-    // ── Online rescale: no global memory access needed ────────────────
+    // Online rescale: no global memory traffic here
     float m_new = fmaxf(m_i, m_tilde);
     float alpha = expf(m_i     - m_new);   // rescale old contribution
     float beta  = expf(m_tilde - m_new);   // rescale new contribution
@@ -420,7 +584,23 @@ for (int j = 0; j &lt; Tc; ++j) {
     l_i = alpha * l_i + beta * l_tilde;
 }
 // Final write: O[q_idx] = O_acc / l_i  ← ONE write to HBM per row</code></pre>
+      </div>
     </div>
+  </div>
+</section>
+
+<!-- ─────────────────────── REPRO ───────────────────────────────────────── -->
+<section id="deliverables" class="section section-lab">
+  <div class="container">
+    <div class="section-tag">Reproduce</div>
+    <h2>Build, bench, profile</h2>
+    <p class="lab-lede">This is the same shell path I used for the PDF. Copy and paste.</p>
+    <pre class="repro-block"><code class="language-bash">git clone https://github.com/batra98/me759-flashattention.git
+cd me759-flashattention && mkdir -p build && cd build
+cmake .. && make -j"$(nproc)"
+./flash_attn --mode correctness --target flash --seq_len 2048
+bash ../benchmarks/run_bench.sh ./flash_attn ../benchmarks/results
+sudo bash ../benchmarks/run_ncu_profile.sh ./flash_attn ../benchmarks/results/hbm_traffic.csv</code></pre>
   </div>
 </section>
 
@@ -428,17 +608,19 @@ for (int j = 0; j &lt; Tc; ++j) {
 <footer class="footer">
   <div class="container">
     <p>
-      ME 759 — High-Performance Computing for Engineering Applications ·
-      University of Wisconsin–Madison · Spring 2026
+      ME 759, high-performance computing (UW–Madison), Spring 2026
     </p>
     <p class="footer-links">
       <a href="https://github.com/batra98/me759-flashattention" target="_blank">GitHub</a> ·
-      <a href="https://arxiv.org/abs/2205.14135" target="_blank">FlashAttention Paper</a>
+      <a href="https://arxiv.org/abs/2205.14135" target="_blank">FlashAttention Paper</a> ·
+      <a href="https://github.com/batra98/me759-flashattention/blob/main/final_report.tex" target="_blank">Final report (TeX)</a>
     </p>
   </div>
 </footer>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="main.js"></script>
+<script src="interactive.js"></script>
 <script>hljs.highlightAll();</script>
 </body>
 </html>

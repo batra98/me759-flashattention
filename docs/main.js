@@ -1,15 +1,14 @@
 // ============================================================================
-// UI Interactions — Code tabs
+// Implementation: CUDA snippet tabs
 // ============================================================================
 function showTab(tabId) {
-    document.querySelectorAll('.code-panel').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-    document.getElementById(`tab-${tabId}`).classList.add('active');
-    
-    // Find the button that called this and make it active
-    const btns = document.querySelectorAll('.tab-btn');
-    if (tabId === 'naive') btns[0].classList.add('active');
-    if (tabId === 'flash') btns[1].classList.add('active');
+    document.querySelectorAll('.code-panel').forEach((el) => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach((el) => el.classList.remove('active'));
+    const panel = document.getElementById(`tab-${tabId}`);
+    if (panel) panel.classList.add('active');
+    const btns = document.querySelectorAll('.code-compare .tab-btn');
+    if (tabId === 'naive') btns[0]?.classList.add('active');
+    if (tabId === 'flash') btns[1]?.classList.add('active');
 }
 
 // ============================================================================
@@ -147,7 +146,6 @@ function updateAnimState() {
 // Intersection Observer (Scroll Reveal)
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("Initializing scroll reveal...");
     const observer = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
             if (entry.isIntersecting) {

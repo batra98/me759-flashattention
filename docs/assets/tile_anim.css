@@ -26,7 +26,7 @@
 }
 
 /* HBM tile "sliding" highlight keyframe (used by the step animation in main.js
-   via CSS class toggles — these are the base transition rules) */
+   via CSS class toggles; base transition rules.) */
 .hbm-tile  { transition: top 0.5s cubic-bezier(0.4, 0, 0.2, 1),
                          background 0.4s,
                          border-color 0.4s; }
