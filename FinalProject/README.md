@@ -125,22 +125,18 @@ Refreshes `data/results/plots/*.png` and `docs/assets/*.png`.
 
 ## Euler (Slurm, timing only)
 
-On department clusters you typically **do not have sudo**, so **Nsight Compute profiling is skipped** here. The batch script follows the same Slurm style as course homework in `repo759` (`#SBATCH -p instruction`, `--gres=gpu:1`, optional `module load` lines you can uncomment).
+On department clusters you typically **do not have sudo**, so **Nsight Compute profiling is skipped** here. The batch script matches **`repo759`**-style Slurm headers (`#SBATCH -p instruction`, `--gres=gpu:1`).
 
-1. Clone the repo on Euler and `cd` into **`FinalProject/`**.
-2. Set **`FLASHATTN_CUDA_ARCH`** to match the GPU (for example **`80`** on A100, **`75`** on T4/Turing). The default in CMake is **75**.
-3. On **engr Euler**, the script **sources Lmod** (batch `zsh` does not define `module` otherwise), then loads **`gnu15/15.1.0`**, **`nvidia/cuda/12.2.0`** (with fallbacks), and **`cmake/4.1.2`** (with `cmake/4.1.0` fallback), matching **`module spider`** on that cluster. Override with **`EULER_MODULE_GNU`**, **`EULER_MODULE_CUDA`**, **`EULER_MODULE_CMAKE`** if your defaults differ. To use your own shell setup instead, **`export EULER_SKIP_MODULES=1`** before `sbatch` and ensure **`nvcc`**, **`g++`**, and **`cmake`** are on **`PATH`**.
-4. Submit:
+1. Clone the repo on Euler and `cd` into **`FinalProject/`** (or **`FinalProject/benchmarks/`**).
+2. Edit **`benchmarks/euler_flash_attn_timing.sh`** if needed: the **`module load`** lines are fixed to **`gnu15/15.1.0`**, **`nvidia/cuda/12.2.0`**, **`cmake/4.1.2`** (engr Euler `module spider` names), and **`FLASHATTN_CUDA_ARCH=80`** in the script (use **75** for sm_75). Batch jobs need **`source /etc/profile.d/modules.sh`** so **`module`** exists before **`module load`**.
+3. Submit:
 
 ```bash
-export FLASHATTN_CUDA_ARCH=80   # example; use 75 on sm_75 GPUs
 sbatch benchmarks/euler_flash_attn_timing.sh
 ```
 
-The script requests **`#SBATCH --time=00:30:00`** so it stays under the `instruction` partition wall-clock cap (longer jobs show Slurm reason **PartitionTimeLimit** and never start).
+The script uses **`#SBATCH --time=00:30:00`** (longer requests can get Slurm **PartitionTimeLimit** and never start). It finds **`FinalProject/`** via **`SLURM_SUBMIT_DIR`**, not **`$0`**, because Slurm runs a copy under **`/var/spool/slurmd/`**.
 
-Slurm runs a **copy** of the script from **`/var/spool/slurmd/`**, so paths must not be derived from `$0`. The job uses **`SLURM_SUBMIT_DIR`** (the directory you were in when you ran **`sbatch`**). Use **`cd FinalProject`** then **`sbatch benchmarks/euler_flash_attn_timing.sh`**, or `cd FinalProject/benchmarks` then **`sbatch euler_flash_attn_timing.sh`**.
+Each job writes **`data/euler_runs/<JOBID>/`** (`job_info.txt`, `nvidia_smi.txt`, `build/`, **`timing.csv`**). That tree is **gitignored**.
 
-Each job writes **`data/euler_runs/<JOBID>/`**: `job_info.txt`, `nvidia_smi.txt`, a fresh **`build/`**, **`timing.csv`**, and Slurm’s `slurm-<JOBID>.out` / `.err` in the directory from which you ran `sbatch`. That tree is **gitignored** so you can `scp` results back without fighting Git.
-
-For a shorter test, set **`MODES`** before `sbatch` (same as `run_bench.sh`), for example: `export MODES="naive flash"`.
+For a shorter sweep, **`export MODES="naive flash"`** before **`sbatch`** (same variable as **`run_bench.sh`**).
