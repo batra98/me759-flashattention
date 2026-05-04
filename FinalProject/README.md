@@ -129,7 +129,7 @@ On department clusters you typically **do not have sudo**, so **Nsight Compute p
 
 1. Clone the repo on Euler and `cd` into **`FinalProject/`**.
 2. Set **`FLASHATTN_CUDA_ARCH`** to match the GPU (for example **`80`** on A100, **`75`** on T4/Turing). The default in CMake is **75**.
-3. Uncomment and fix **`module load`** lines in `benchmarks/euler_flash_attn_timing.sh` if `cmake` / `nvcc` are not already on your `PATH`.
+3. On **engr Euler**, the script **sources Lmod** (batch `zsh` does not define `module` otherwise), then loads **`gnu15/15.1.0`**, **`nvidia/cuda/12.2.0`** (with fallbacks), and **`cmake/4.1.2`** (with `cmake/4.1.0` fallback), matching **`module spider`** on that cluster. Override with **`EULER_MODULE_GNU`**, **`EULER_MODULE_CUDA`**, **`EULER_MODULE_CMAKE`** if your defaults differ. To use your own shell setup instead, **`export EULER_SKIP_MODULES=1`** before `sbatch` and ensure **`nvcc`**, **`g++`**, and **`cmake`** are on **`PATH`**.
 4. Submit:
 
 ```bash
