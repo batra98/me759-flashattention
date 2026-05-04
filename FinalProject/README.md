@@ -128,7 +128,7 @@ Refreshes `data/results/plots/*.png` and `docs/assets/*.png`.
 On department clusters you typically **do not have sudo**, so **Nsight Compute profiling is skipped** here. The batch script matches **`repo759`**-style Slurm headers (`#SBATCH -p instruction`, `--gres=gpu:1`).
 
 1. Clone the repo on Euler and `cd` into **`FinalProject/`** (or **`FinalProject/benchmarks/`**).
-2. Edit **`benchmarks/euler_flash_attn_timing.sh`** if needed: fixed **`module load`** stack **`gnu15/15.1.0`**, **`nvidia/cuda/12.2.0`**, **`cmake/4.1.2`**, and **`FLASHATTN_CUDA_ARCH=89`** for **RTX Ada** instruction GPUs (use **80** for A100, **75** for T4). CMake is called with **`-allow-unsupported-compiler`** because **CUDA 12.2’s nvcc does not officially support GCC 15** from `gnu15` (otherwise you get `host_config.h: unsupported GNU version`). To avoid that flag, load a **GCC ≤12** module instead of `gnu15` and remove the flag from the script.
+2. Edit **`benchmarks/euler_flash_attn_timing.sh`** if needed: the script loads **`gnu12/12.3.0`** (GCC 12, supported by **CUDA 12.2 nvcc**), then **`nvidia/cuda/12.2.0`**, **`cmake/4.1.2`**, and **`FLASHATTN_CUDA_ARCH=89`** for **RTX Ada** instruction GPUs (use **80** for A100, **75** for T4). If **`module load gnu12/12.3.0`** fails, run **`module spider gnu12`** on a login node and adjust that one line.
 3. Submit:
 
 ```bash
