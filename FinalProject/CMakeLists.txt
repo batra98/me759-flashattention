@@ -1,9 +1,8 @@
 cmake_minimum_required(VERSION 3.18)
 
-# Default matches Tesla T4 / Turing (sm_75). On Euler or other clusters:
+# Default matches Tesla T4 / Turing (sm_75). Override when targeting another GPU, e.g.
 #   cmake -DFLASHATTN_CUDA_ARCH=80 ..
-# for A100 (sm_80), or export FLASHATTN_CUDA_ARCH before sbatch.
-set(FLASHATTN_CUDA_ARCH "75" CACHE STRING "CUDA real arch for nvcc (e.g. 75, 80, 70)")
+set(FLASHATTN_CUDA_ARCH "75" CACHE STRING "CUDA real arch for nvcc (e.g. 75, 80, 89)")
 set(CMAKE_CUDA_ARCHITECTURES "${FLASHATTN_CUDA_ARCH}")
 
 project(FlashAttentionME759 CUDA CXX)

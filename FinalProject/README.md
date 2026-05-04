@@ -10,7 +10,7 @@ This folder is the **course submission root** (name must be exactly `FinalProjec
 
 | Area | Status |
 |------|--------|
-| **Hardware target** | NVIDIA Tesla T4 (`sm_75`); CMake builds for architecture 75. |
+| **Hardware target** | NVIDIA Tesla T4 (`sm_75`) on a **Google Cloud Platform** VM. Timings and NCU CSVs in this repo were collected there. I did **not** use the department **Euler** cluster: instruction nodes exposed a **CUDA 12.2 / GCC 15** toolchain mismatch for `nvcc` (and Slurm/GPU types differed from the T4-focused build), so I standardized everything on the GCP T4 for reproducibility. |
 | **Correctness** | Each mode is checked against the naive FP32 reference (`--mode correctness`); WMMA modes use a slightly looser RMSE tolerance because of FP16 score accumulation. |
 | **Latency sweep** | Checked-in `data/results/timing.csv`: N ∈ {512, 1024, 2048, 4096, 8192}, d = 64, 5 warmup + 20 timed iterations per point. |
 | **Profiling** | Checked-in `data/results/hbm_traffic.csv`: Nsight Compute L1TEX global byte counters via `benchmarks/run_ncu_profile.sh`. |
@@ -120,23 +120,3 @@ python3 python/plot_results.py
 ```
 
 Refreshes `data/results/plots/*.png` and `docs/assets/*.png`.
-
----
-
-## Euler (Slurm, timing only)
-
-On department clusters you typically **do not have sudo**, so **Nsight Compute profiling is skipped** here. The batch script matches **`repo759`**-style Slurm headers (`#SBATCH -p instruction`, `--gres=gpu:1`).
-
-1. Clone the repo on Euler and `cd` into **`FinalProject/`** (or **`FinalProject/benchmarks/`**).
-2. Edit **`benchmarks/euler_flash_attn_timing.sh`** if needed: on **engr Euler**, **`module spider gnu`** only shows **`gnu15/15.1.0`** (no `gnu12`). The script loads **`gnu15`**, **`nvidia/cuda/12.2.0`**, **`cmake/4.1.2`**, **`FLASHATTN_CUDA_ARCH=89`** (RTX Ada), and CMake uses **`-allow-unsupported-compiler`** because **CUDA 12.2 + GCC 15** is outside nvcc’s officially supported range (otherwise **`host_config.h`** errors). If the cluster later provides **GCC ≤12**, switch to that module and remove that CMake flag.
-3. Submit:
-
-```bash
-sbatch benchmarks/euler_flash_attn_timing.sh
-```
-
-The script uses **`#SBATCH --time=00:30:00`** (longer requests can get Slurm **PartitionTimeLimit** and never start). It finds **`FinalProject/`** via **`SLURM_SUBMIT_DIR`**, not **`$0`**, because Slurm runs a copy under **`/var/spool/slurmd/`**.
-
-Each job writes **`data/euler_runs/<JOBID>/`** (`job_info.txt`, `nvidia_smi.txt`, `build/`, **`timing.csv`**). That tree is **gitignored**.
-
-For a shorter sweep, **`export MODES="naive flash"`** before **`sbatch`** (same variable as **`run_bench.sh`**).

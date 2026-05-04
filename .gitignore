@@ -1,5 +1,4 @@
 build/
-FinalProject/data/euler_runs/
 *.o *.a *.so *.d *.ptx *.cubin
 __pycache__/ *.pyc
 .vscode/ .DS_Store
