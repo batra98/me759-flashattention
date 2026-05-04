@@ -38,7 +38,7 @@
 [1.5ex]
 {\Large Final Project Report}\\[1ex]
 {\large University of Wisconsin--Madison}\\[2ex]
-{\Large\textbf{Name of the Final Project:} FlashAttention in Raw CUDA}\\[2ex]
+{\Large FlashAttention in Raw CUDA}\\[2ex]
 }
 \author{Gaurav Batra \\ \href{mailto:gbatra3@wisc.edu}{gbatra3@wisc.edu}}
 \date{May 5, 2026}
@@ -50,8 +50,8 @@
 
 \begin{abstract}
 \noindent
-When a transformer attends over long sequences, the bottleneck is rarely arithmetic: it is the cost of writing a full $N{\times}N$ score matrix to GPU global memory and reading it back for softmax. I implemented a FlashAttention-style forward pass from scratch in CUDA C++, replacing that round trip with tiled shared-memory kernels and an online softmax recurrence~\cite{dao2022,milakov2018}. I benchmarked five kernel families on an NVIDIA Tesla T4: a three-kernel naive baseline, tiled FP32 FlashAttention (v1), causal FlashAttention, a warp-centric FP32 experiment (v2), and an FP16 WMMA score path. Tiled Flash cuts latency by roughly $1.9\times$ at $N{=}8192$ and drops global reads by about one order of magnitude at $N{=}4096$. Causal masking gives the best wall-clock time in my runs ($\approx 30.6$\,ms at $N{=}8192$). The WMMA path reaches $\approx 50$\,ms non-causal with the smallest HBM footprint of any variant. The v2 prototype matches the reference but runs slower than even the naive baseline at large $N$, which made for a clear lesson in how tile geometry and memory traffic interact.
-\textit{All timings and NCU data in this report come from a Tesla T4 on \textbf{Google Cloud Platform}. I did not use the department Euler cluster for final results: instruction nodes combined CUDA toolchains with host GCC versions that \texttt{nvcc} rejected without brittle workarounds; the GPUs available there were not T4s; and \textbf{Nsight Compute} (\texttt{ncu}) profiling for HBM counters is run with \texttt{sudo} in my workflow (\texttt{run\_ncu\_profile.sh}), which Euler instruction accounts do not allow. I standardized on GCP for reproducibility.}
+When a transformer attends over long sequences, the bottleneck is rarely arithmetic: it is the cost of writing a full $N{\times}N$ score matrix to GPU global memory and reading it back for softmax. I implemented a FlashAttention-style forward pass from scratch in CUDA C++, replacing that round trip with tiled shared-memory kernels and an online softmax recurrence~\cite{dao2022,milakov2018}. I benchmarked five kernel families on an NVIDIA Tesla T4 on \textbf{Google Cloud Platform}: a three-kernel naive baseline, tiled FP32 FlashAttention (v1), causal FlashAttention, a warp-centric FP32 experiment (v2), and an FP16 WMMA score path. Tiled Flash cuts latency by roughly $1.9\times$ at $N{=}8192$ and drops global reads by about one order of magnitude at $N{=}4096$. Causal masking gives the best wall-clock time in my runs ($\approx 30.6$\,ms at $N{=}8192$). The WMMA path reaches $\approx 50$\,ms non-causal with the smallest HBM footprint of any variant. The v2 prototype matches the reference but runs slower than even the naive baseline at large $N$, which made for a clear lesson in how tile geometry and memory traffic interact.
+\textit{All timings and NCU data in this report come from a Tesla T4 on \textbf{Google Cloud Platform}. For measured host and GPU specifications (instance type, bandwidth, driver, CUDA, NCU), see \href{https://github.com/batra98/me759-flashattention/blob/main/FinalProject/README.md\#hardware-environment}{here} (\texttt{FinalProject/README.md}, section \emph{Hardware environment}).}
 
 \medskip
 \noindent\textbf{Final Project git repo:} \url{https://github.com/batra98/me759-flashattention}
@@ -65,7 +65,7 @@ When a transformer attends over long sequences, the bottleneck is rarely arithme
 \tableofcontents
 \clearpage
 
-\section*{General information}
+\section{General information}
 \addcontentsline{toc}{section}{General information}
 \begin{itemize}
     \item \textbf{Name:} Gaurav Batra
@@ -85,13 +85,15 @@ Dao et al.~\cite{dao2022} showed that you can avoid materializing $S$ at all by 
 
 I reimplemented that idea from scratch in raw CUDA, without relying on any closed-source kernel libraries. My goals were: (1)~check that my kernels match a reference implementation, (2)~measure how much latency and HBM traffic change on a real T4, and (3)~try a few design variants (causal masking, a warp-centric FP32 layout, and Tensor Core scores) so I could see the tradeoffs between IO, occupancy, and arithmetic directly in the data.
 
-For me this was a performance engineering exercise: I wanted to know \emph{why} a kernel is fast or slow, not just that it is. Attention is the natural place to learn that, and it lines up with the IO-aware and GPU programming themes in ME/CS/ECE 759.
-
 \section[Implementation]{Solution description}
 \label{sec:solution}
 
 \subsection{Hardware and how I measured}
-I ran all experiments on an \textbf{NVIDIA Tesla T4} (sm\_75, Turing) on a \textbf{Google Cloud Platform} virtual machine with the CUDA toolkit and NCU installed. I did not use the department \textbf{Euler} cluster for the final numbers: the instruction-partition software stack there paired \textbf{CUDA 12.2} with a \textbf{GCC 15} host compiler that \texttt{nvcc} rejects without non-default overrides; the available GPUs were not T4s; and \textbf{Nsight Compute} (\texttt{ncu}) for the HBM sweep is invoked with \texttt{sudo} in \texttt{run\_ncu\_profile.sh}, which Euler does not grant for routine jobs. I standardized builds, correctness checks, timings, and NCU on the GCP T4 for a single reproducible environment. I report latency as the mean of 20 \texttt{cudaEvent}-timed iterations after 5 warmup runs. I validate outputs with RMSE against the naive FP32 reference; WMMA kernels use a slightly looser tolerance because FP16 score accumulation rounds differently. For memory traffic I used \textbf{Nsight Compute} (NCU) L1TEX global load/store byte counters, collected with \texttt{FinalProject/benchmarks/run\_ncu\_profile.sh} (run from the \texttt{FinalProject/} directory).
+I ran all experiments on an \textbf{NVIDIA Tesla T4} (sm\_75, Turing) on \textbf{Google Cloud Platform}. I do not duplicate full machine specifications in this PDF; for the measured host and GPU table (instance type, memory bandwidth, L2, shared memory limits, driver, CUDA toolkit, Nsight Compute version), see \href{https://github.com/batra98/me759-flashattention/blob/main/FinalProject/README.md\#hardware-environment}{README.md} in the repository (\texttt{FinalProject/README.md}, section \emph{Hardware environment}).
+
+I did not use the department \textbf{Euler} cluster for the final numbers: the instruction-partition software stack there paired \textbf{CUDA 12.2} with a \textbf{GCC 15} host compiler that \texttt{nvcc} rejects without non-default overrides and \textbf{Nsight Compute} (\texttt{ncu}) for the HBM sweep is invoked with \texttt{sudo} in \texttt{run\_ncu\_profile.sh}, which Euler does not grant for routine jobs.
+
+I have standardized builds, correctness checks, timings, and NCU on the GCP T4 for a single reproducible environment. Latency is reported as the mean of 20 \texttt{cudaEvent}-timed iterations after 5 warmup runs. I validate outputs with RMSE against the naive FP32 reference; WMMA kernels use a slightly looser tolerance because FP16 score accumulation rounds differently. For memory traffic, I used \textbf{Nsight Compute} (NCU) L1TEX global load/store byte counters, collected with \texttt{FinalProject/benchmarks/run\_ncu\_profile.sh} (run from the \texttt{FinalProject/} directory).
 
 \subsection{Repository layout and build}
 \label{sec:codestructure}
@@ -132,16 +134,16 @@ I kept boilerplate in one header instead of duplicating it across every \texttt{
     \item \textbf{Tile constants:} \texttt{D\_HEAD=64}; Flash v1 uses \texttt{BR=BC=32}; v2 uses \texttt{BR\_V2=16}, \texttt{BC\_V2=32}; WMMA uses \texttt{BR\_WMMA=BC\_WMMA=16}. All matrices are row-major with shape $[N, d]$.
 \end{itemize}
 
-\noindent The header defines \texttt{CUDA\_CHECK} (wraps CUDA calls and exits on failure), \texttt{GpuTimer}, and the compile-time tile sizes every kernel agrees on:
+% \noindent The header defines \texttt{CUDA\_CHECK} (wraps CUDA calls and exits on failure), \texttt{GpuTimer}, and the compile-time tile sizes every kernel agrees on:
 
-\begin{lstlisting}[language=C++, basicstyle=\ttfamily\footnotesize, frame=single,
-  commentstyle=\color{green!60!black}]
-// Full CUDA_CHECK macro expands to cudaError_t check + fprintf + exit.
-static constexpr int D_HEAD = 64;
-static constexpr int BR = 32, BC = 32;       // Flash v1
-static constexpr int BR_V2 = 16, BC_V2 = 32; // experimental v2
-static constexpr int BR_WMMA = 16, BC_WMMA = 16;
-\end{lstlisting}
+% \begin{lstlisting}[language=C++, basicstyle=\ttfamily\footnotesize, frame=single,
+%   commentstyle=\color{green!60!black}]
+% // Full CUDA_CHECK macro expands to cudaError_t check + fprintf + exit.
+% static constexpr int D_HEAD = 64;
+% static constexpr int BR = 32, BC = 32;       // Flash v1
+% static constexpr int BR_V2 = 16, BC_V2 = 32; // experimental v2
+% static constexpr int BR_WMMA = 16, BC_WMMA = 16;
+% \end{lstlisting}
 
 \subsection{CLI driver (\texttt{main.cu})}
 
@@ -455,11 +457,6 @@ The roofline panel (Figure~\ref{fig:roofline}) is only a rough diagnostic: I use
 
 Section~\ref{sec:codestructure} and Table~\ref{tab:modules} describe the layout of the repo I submitted. The commands below are what I used (and what you can use) to rebuild the binary, rerun timings and NCU, and regenerate the plots from the CSVs.
 
-\subsection{Submission layout (\texttt{FinalProject/})}
-\label{sec:finalproject_layout}
-
-The course staff clone the repository and look for course code under a top-level folder named exactly \texttt{FinalProject/}. All CUDA sources, CMake, benchmarks, plotting scripts, and the GitHub Pages site live there. Generated CSVs and plot PNGs are under \texttt{FinalProject/data/results/} (with \texttt{build/} reserved for out-of-tree compilation; both are described in \texttt{FinalProject/README.md}). Section~\ref{sec:codestructure} mirrors that tree in more detail.
-
 \subsection{Clone and compile}
 \begin{verbatim}
 git clone https://github.com/batra98/me759-flashattention.git
@@ -474,7 +471,6 @@ cmake .. && make -j"$(nproc)"
 bash ../benchmarks/run_bench.sh ./flash_attn ../data/results
 sudo bash ../benchmarks/run_ncu_profile.sh ./flash_attn \
     ../data/results/hbm_traffic.csv
-cd .. && python3 python/plot_results.py
 \end{verbatim}
 
 \section[Takeaways]{Conclusions and Future Work}

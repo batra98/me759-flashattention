@@ -481,7 +481,7 @@
           <span class="kc-title">Experimental v2 (warp-centric)</span>
           <span class="kc-chevron" aria-hidden="true">▼</span>
         </button>
-        <p class="kc-summary">Smaller $B_r$ sounded clever; it bought extra outer-loop passes. Honest miss.</p>
+        <p class="kc-summary">Smaller $B_r$ sounded clever; it bought extra outer-loop passes.</p>
         <div class="kc-body">
           <p>When $B_r$ is half as wide you sweep the whole $K/V$ stream twice as often. NCU reads land near ~2× Flash v1, and wall clock goes past naive at big $N$. Lesson learned: fusion without the right tile shape still loses.</p>
         </div>
@@ -594,7 +594,7 @@ for (int j = 0; j &lt; Tc; ++j) {
   <div class="container">
     <div class="section-tag">Reproduce</div>
     <h2>Build, bench, profile</h2>
-    <p class="lab-lede">This is the same shell path I used for the PDF. Copy and paste.</p>
+    <!-- <p class="lab-lede">This is the same shell path I used for the PDF. Copy and paste.</p> -->
     <pre class="repro-block"><code class="language-bash">git clone https://github.com/batra98/me759-flashattention.git
 cd me759-flashattention/FinalProject && mkdir -p build && cd build
 cmake .. && make -j"$(nproc)"
