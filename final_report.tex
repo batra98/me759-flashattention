@@ -5,10 +5,24 @@
 \usepackage{amsmath}
 \usepackage{amsfonts}
 \usepackage{graphicx}
+\graphicspath{{docs/assets/}{assets/}{./}}
+\PassOptionsToPackage{hyphens}{url}
 \usepackage{hyperref}
+% Optional: \usepackage{xurl} % extra URL break points (omit if not installed; hyphens + UrlBreaks below suffice)
+\usepackage{ragged2e}
+\usepackage[htt]{hyphenat}
+\usepackage{array}
 \usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{makecell}
 \usepackage{xcolor}
+\makeatletter
+\g@addto@macro\UrlBreaks{\do\.\do\/\do\-\do\_}
+\makeatother
 \usepackage{listings}
+\usepackage{float}
+\usepackage{subcaption}
+\captionsetup[subfigure]{font=footnotesize, skip=6pt}
 
 \hypersetup{
     colorlinks=true,
@@ -17,65 +31,216 @@
     urlcolor=blue,
 }
 
-\title{ME 759 Final Project Report\\ \Large FlashAttention in Raw CUDA}
-\author{Gaurav Batra \\ \href{mailto:gbatra3@wisc.edu}{gbatra3@wisc.edu} \\ \textit{Computer Science (MS)}}
-\date{May 3, 2026}
+% Title block follows ME/CS/ECE 759 Final Project template (Spring 2026).
+\title{\vspace{-2em}%
+{\large Spring 2026}\\
+{\large ME/CS/ECE 759}\\
+[1.5ex]
+{\Large Final Project Report}\\[1ex]
+{\large University of Wisconsin--Madison}\\[2ex]
+{\Large\textbf{Name of the Final Project:} FlashAttention in Raw CUDA}\\[2ex]
+}
+\author{Gaurav Batra \\ \href{mailto:gbatra3@wisc.edu}{gbatra3@wisc.edu}}
+\date{May 5, 2026}
 
 \begin{document}
 
 \maketitle
-
-\vspace{-1.5em}
-\begin{center}
-    \textbf{Project Repository:} \url{https://github.com/batra98/me759-flashattention} \\
-    \vspace{0.3em}
-    \textbf{Interactive Educational Report:} \url{https://batra98.github.io/me759-flashattention}
-\end{center}
-\vspace{1em}
+\thispagestyle{empty}
 
 \begin{abstract}
-Standard Transformer attention mechanisms suffer from $O(N^2)$ memory complexity. Calculating the dot product of every Query with every Key requires materializing a massive $N \times N$ matrix in High Bandwidth Memory (HBM). This report describes a custom FlashAttention forward pass in bare-metal CUDA. By utilizing Shared Memory (SRAM) and reformulating the softmax computation, we demonstrate a reduction in global memory traffic from $O(N^2)$ to $O(N)$; on an NVIDIA Tesla T4 at $N{=}4096$, FlashAttention v1 (FP32 tiling) achieves roughly a $1.8\times$ speedup over a three-kernel naive baseline and orders-of-magnitude lower HBM writes versus materializing $S$. We additionally evaluate causal masking, a warp-shuffle row formulation, and a WMMA Tensor Core score path behind the same \texttt{flash\_attn} driver: at $N{=}8192$, causal FlashAttention reaches $\approx 30.6$\,ms vs.\ $\approx 58.7$\,ms for non-causal Flash and $\approx 112$\,ms for naive; WMMA improves non-causal Flash to $\approx 50.0$\,ms while NCU global-byte counters remain lowest for WMMA. An interactive educational website visualizes the Streaming Multiprocessor (SM) memory hierarchy.
+\noindent
+When a transformer attends over long sequences, the bottleneck is rarely arithmetic: it is the cost of writing a full $N{\times}N$ score matrix to GPU global memory and reading it back for softmax. I implemented a FlashAttention-style forward pass from scratch in CUDA C++, replacing that round trip with tiled shared-memory kernels and an online softmax recurrence~\cite{dao2022,milakov2018}. I benchmarked five kernel families on an NVIDIA Tesla T4: a three-kernel naive baseline, tiled FP32 FlashAttention (v1), causal FlashAttention, a warp-centric FP32 experiment (v2), and an FP16 WMMA score path. Tiled Flash cuts latency by roughly $1.9\times$ at $N{=}8192$ and drops global reads by about one order of magnitude at $N{=}4096$. Causal masking gives the best wall-clock time in my runs ($\approx 30.6$\,ms at $N{=}8192$). The WMMA path reaches $\approx 50$\,ms non-causal with the smallest HBM footprint of any variant. The v2 prototype matches the reference but runs slower than even the naive baseline at large $N$, which made for a clear lesson in how tile geometry and memory traffic interact.
+
+\medskip
+\noindent\textbf{Final Project git repo:} \url{https://github.com/batra98/me759-flashattention}
+
+\medskip
+\noindent\textit{(Interactive write-up: \url{https://batra98.github.io/me759-flashattention}.)}
 \end{abstract}
 
-\section{Introduction and Motivation}
-In modern Deep Learning workloads, specifically autoregressive large language models, inference is fundamentally memory-bandwidth bound rather than compute-bound \cite{dao2022}. The standard attention formulation materializes the full $N \times N$ attention matrix $S$ in Global Memory (HBM). For sequence lengths like $N=4096$, writing this intermediate matrix to global memory, only to immediately read it back to compute the Softmax denominator, completely saturates the GPU memory bus.
+\clearpage
+\setcounter{page}{1}
+\tableofcontents
+\clearpage
 
-While libraries like cuBLAS are highly optimized, they act as black boxes. Writing a custom FlashAttention kernel from scratch provides a deep understanding of hardware utilization. The objective of this project is to implement FlashAttention \cite{dao2022} completely from scratch in raw CUDA C++, benchmarking its latency and using NVIDIA Nsight Compute (NCU) to analytically verify the reduction in HBM traffic on an NVIDIA GPU.
+\section*{General information}
+\addcontentsline{toc}{section}{General information}
+\begin{itemize}
+    \item \textbf{Name:} Gaurav Batra
+    \item \textbf{Email:} \href{mailto:gbatra3@wisc.edu}{gbatra3@wisc.edu}
+    \item \textbf{Home department:} Computer Sciences
+    \item \textbf{Status:} MS student
+    \item \textbf{Teammate (if applicable):} Not applicable (solo project).
+    \item \textbf{Code release:} I release the ME/CS/ECE 759 Final Project code as open source under a BSD 3-Clause license for unfettered use by any interested party.
+\end{itemize}
 
-\section{Methodology \& Algorithm Design}
+\section[Problem and goals]{Problem and goals}
+\label{sec:problem}
 
-\subsection{The Baseline (Naive) Implementation}
-To form a solid experimental baseline, a standard three-kernel attention mechanism was implemented:
-\begin{enumerate}
-    \item \textbf{Score Kernel:} Computes $S = QK^T / \sqrt{d}$ and saves the full $N \times N$ matrix to HBM.
-    \item \textbf{Softmax Kernel:} Loads rows from HBM, finds the moving maximum, exponentiates, and normalizes in a multi-pass approach over HBM lines.
-    \item \textbf{Output Kernel:} Loads probabilities and $V$ from HBM, computing and writing the final output $O$ to HBM.
-\end{enumerate}
-This naive approach exhibits massive uncoalesced global reads and creates immense HBM thrashing.
+Attention is the engine of modern language models, but the standard implementation has a quiet performance problem. For every forward pass, it writes the full $N{\times}N$ score matrix $S = QK^\top / \sqrt{d}$ to high-bandwidth memory (HBM), then immediately reads it back to compute softmax~\cite{vaswani2017}. At sequence lengths like $N = 4096$ or $N = 8192$, that traffic completely dominates the wall-clock time; the GPU is mostly waiting on memory, not computing.
 
-For causal (autoregressive) comparisons we also implement \textbf{naive causal} attention: disallowed logits are set to large negative values before softmax, matching lower-triangular masking.
+Dao et al.~\cite{dao2022} showed that you can avoid materializing $S$ at all by tiling $Q$, $K$, and $V$ into blocks that fit in fast on-chip shared memory (SRAM), and tracking softmax statistics incrementally as you go. The result is the same attention output, but with $O(N)$ global memory traffic instead of $O(N^2)$.
 
-\subsection{FlashAttention (Tiled, Shared Memory) Implementation}
-To resolve the memory bottleneck, the algorithm was redesigned to leverage the 64 KB Shared memory (SRAM) available per SM on the Tesla T4 architecture. With chosen block sizes $B_r = 32$, $B_c = 32$, and $d = 64$, the required matrices fit comfortably into a 24 KB SRAM footprint.
+I reimplemented that idea from scratch in raw CUDA, without relying on any closed-source kernel libraries. My goals were: (1)~check that my kernels match a reference implementation, (2)~measure how much latency and HBM traffic change on a real T4, and (3)~try a few design variants (causal masking, a warp-centric FP32 layout, and Tensor Core scores) so I could see the tradeoffs between IO, occupancy, and arithmetic directly in the data.
 
-\subsubsection{Online Softmax and Loop Tiling}
-Instead of processing the entire $N \times N$ matrix at once, the $Q, K,$ and $V$ matrices are sliced into smaller blocks. We load a small block from global memory into SRAM and compute the attention scores.
+For me this was a performance engineering exercise: I wanted to know \emph{why} a kernel is fast or slow, not just that it is. Attention is the natural place to learn that, and it lines up with the IO-aware and GPU programming themes in ME/CS/ECE 759.
 
-To prevent numerical overflow without requiring the entire row, we implement the Online Softmax algorithm \cite{milakov2018}. By maintaining a moving maximum ($m$) and a local normalization sum ($\ell$) directly within the ultra-fast thread registers, the denominator is updated incrementally:
-\begin{equation}
-m^{(j)}_i = \max\!\bigl(m^{(j-1)}_i,\; \tilde{m}_{ij}\bigr)
-\end{equation}
-\begin{equation}
-\ell^{(j)}_i = e^{m^{(j-1)}_i - m^{(j)}_i}\,\ell^{(j-1)}_i + e^{\tilde{m}_{ij} - m^{(j)}_i}\,\tilde{\ell}_{ij}
-\end{equation}
-This allows the kernel to fuse the operations. The $O(N^2)$ logits are never written to HBM, as shown in this core CUDA block:
+\section[Implementation]{What I implemented}
+\label{sec:solution}
 
-\begin{lstlisting}[language=C++, basicstyle=\ttfamily\footnotesize, frame=single, commentstyle=\color{green!60!black}]
-// Online rescale: completely eliminating global memory writes
+\subsection{Hardware and how I measured}
+I ran all experiments on an \textbf{NVIDIA Tesla T4} (sm\_75, Turing). I report latency as the mean of 20 \texttt{cudaEvent}-timed iterations after 5 warmup runs. I validate outputs with RMSE against the naive FP32 reference; WMMA kernels use a slightly looser tolerance because FP16 score accumulation rounds differently. For memory traffic I used \textbf{Nsight Compute} (NCU) L1TEX global load/store byte counters, collected with \texttt{benchmarks/run\_ncu\_profile.sh}.
+
+\subsection{Repository layout and build}
+\label{sec:codestructure}
+
+I use \textbf{CMake} to build a single executable \texttt{flash\_attn} for sm\_75 (\texttt{CMAKE\_CUDA\_ARCHITECTURES=75}). I compile every \texttt{.cu} file with \texttt{-O3}, \texttt{--extended-lambda}, \texttt{--expt-relaxed-constexpr}, \texttt{-lineinfo}, and \texttt{--ptxas-options=-v}, then link one binary so the host driver and kernels stay matched.
+
+\begin{verbatim}
+me759-flashattention/
+  CMakeLists.txt
+  src/
+    attention_utils.cuh           % shared macros, timer, constants
+    main.cu                       % CLI, allocations, correctness vs benchmark
+    naive_attention.cu            % three-kernel naive + causal QKT
+    flash_attention_v1.cu         % tiled FP32 Flash (templates BR, BC, D)
+    flash_attention_v1_causal.cu  % causal variant + tile skipping
+    flash_attention_v2.cu         % warp-centric FP32 experiment
+    flash_attention_v3_wmma.cu    % WMMA scores + wmma_db alias
+  benchmarks/
+    run_bench.sh
+    run_ncu_profile.sh
+    results/                      % timing.csv, hbm_traffic.csv (generated)
+  python/
+    plot_results.py               % reads CSVs and produces PNG plots
+  assets/                         % figures for this report (generated)
+\end{verbatim}
+
+\subsection{Shared utilities (\texttt{attention\_utils.cuh})}
+
+I kept boilerplate in one header instead of duplicating it across every \texttt{.cu} file:
+\begin{itemize}
+    \item \textbf{\texttt{CUDA\_CHECK}} wraps every runtime call and prints a clear error message with file and line number if something goes wrong.
+    \item \textbf{\texttt{GpuTimer}} wraps two \texttt{cudaEvent\_t} handles and returns elapsed milliseconds between \texttt{Start} and \texttt{Stop}.
+    \item \textbf{Host helpers:} \texttt{fill\_random} fills $Q$, $K$, $V$ from a fixed seed so every kernel sees the same inputs; \texttt{rmse} computes the root-mean-square error between two output arrays.
+    \item \textbf{Tile constants:} \texttt{D\_HEAD=64}; Flash v1 uses \texttt{BR=BC=32}; v2 uses \texttt{BR\_V2=16}, \texttt{BC\_V2=32}; WMMA uses \texttt{BR\_WMMA=BC\_WMMA=16}. All matrices are row-major with shape $[N, d]$.
+\end{itemize}
+
+\noindent The header defines \texttt{CUDA\_CHECK} (wraps CUDA calls and exits on failure), \texttt{GpuTimer}, and the compile-time tile sizes every kernel agrees on:
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\footnotesize, frame=single,
+  commentstyle=\color{green!60!black}]
+// Full CUDA_CHECK macro expands to cudaError_t check + fprintf + exit.
+static constexpr int D_HEAD = 64;
+static constexpr int BR = 32, BC = 32;       // Flash v1
+static constexpr int BR_V2 = 16, BC_V2 = 32; // experimental v2
+static constexpr int BR_WMMA = 16, BC_WMMA = 16;
+\end{lstlisting}
+
+\subsection{CLI driver (\texttt{main.cu})}
+
+\texttt{main.cu} parses \verb|--mode|, \verb|--target|, \verb|--seq_len|, \verb|--d_head|, \verb|--warmup|, \verb|--iters|, and \verb|--csv|. It allocates and uploads $Q$, $K$, $V$ to the device, then branches into one of two paths:
+
+\begin{itemize}
+    \item \textbf{Correctness mode} (\verb|--mode correctness --target X|) allocates an extra $N{\times}N$ buffer \texttt{dS} for the naive score matrix. For non-causal targets, the naive reference runs first into \texttt{dO\_ref}, then the kernel under test runs into \texttt{dO\_tst}. RMSE must be below $10^{-3}$ for FP32 kernels and $5{\cdot}10^{-3}$ for WMMA.
+    \item \textbf{Benchmark mode} warms up the kernel, then averages \texttt{iters} timed runs with \texttt{GpuTimer}. The result is printed as plain text or as a CSV line (\texttt{mode,N,d,ms}) with \verb|--csv|.
+\end{itemize}
+
+I route kernels through \texttt{run\_target}: \texttt{flash} calls \texttt{flash\_attention\_v1}, \texttt{flash\_causal} calls \texttt{flash\_attention\_v1\_causal}, and the WMMA modes call their wrappers. Naive modes bypass that helper because they still allocate the full $N{\times}N$ \texttt{dS} buffer.
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\footnotesize, frame=single,
+  commentstyle=\color{green!60!black}]
+static void run_target(const char* mode,
+    const float* dQ, const float* dK, const float* dV,
+    float* dO, int N, int d)
+{
+    if      (!strcmp(mode, "flash"))
+        flash_attention_v1(dQ, dK, dV, dO, N);
+    else if (!strcmp(mode, "flash_causal"))
+        flash_attention_v1_causal(dQ, dK, dV, dO, N);
+    else if (!strcmp(mode, "flash_v2"))
+        flash_attention_v2(dQ, dK, dV, dO, N);
+    else if (!strcmp(mode, "flash_wmma"))
+        flash_attention_v3_wmma(dQ, dK, dV, dO, N);
+    // ... flash_wmma_db, error handling
+}
+\end{lstlisting}
+
+\subsection{Kernel modules (overview)}
+
+Table~\ref{tab:modules} lists each source file. For each kernel I wrote a small host wrapper that sets the launch grid and instantiates the device template with fixed shapes (for example $(B_r, B_c, d) = (32, 32, 64)$ for v1).
+
+\begin{table}[H]
+    \centering
+    \caption{Source files, host APIs, and primary device kernels.}
+    \label{tab:modules}
+    \footnotesize
+    \setlength{\tabcolsep}{4pt}
+    \renewcommand{\arraystretch}{1.15}
+    \begin{tabularx}{\textwidth}{@{}>{\RaggedRight\arraybackslash}p{0.34\textwidth}>{\RaggedRight\arraybackslash}X@{}}
+        \toprule
+        \textbf{File} & \textbf{Role} \\
+        \midrule
+        \path|naive_attention.cu| &
+        \makecell[l]{%
+            Host \texttt{naive\_attention}, \texttt{naive\_attention\_causal}.\\
+            Kernels: \texttt{qkt\_kernel}, \texttt{qkt\_kernel\_causal}, \texttt{softmax\_kernel}, \texttt{pv\_kernel}.} \\
+        \path|flash_attention_v1.cu| &
+        \makecell[l]{%
+            Host \texttt{flash\_attention\_v1}. Device \texttt{flash\_attn\_fwd} $\langle B_r,B_c,d\rangle$.\\
+            Shared $Q/K/V$ tiles; online softmax (Listing~\ref{lst:online_softmax}).} \\
+        \path|flash_attention_v1_causal.cu| &
+        \makecell[l]{%
+            Host \texttt{flash\_attention\_v1\_causal}. \texttt{flash\_attn\_fwd\_causal} $\langle B_r,B_c,d\rangle$.\\
+            Skips future-only tiles; boundary masks (Listing~\ref{lst:causal_skip}).} \\
+        \path|flash_attention_v2.cu| &
+        \makecell[l]{%
+            Host \texttt{flash\_attention\_v2}. Template \texttt{flash\_attn\_fwd\_v2};\\
+            \texttt{\_\_launch\_bounds\_\_(512,2)} (Listing~\ref{lst:v2_kernel}).} \\
+        \path|flash_attention_v3_wmma.cu| &
+        \makecell[l]{%
+            Host \texttt{flash\_attention\_v3\_wmma}, \texttt{flash\_attention\_v3\_wmma\_db} (sm\_75).\\
+            Template \texttt{flash\_attn\_fwd\_wmma}; WMMA $16{\times}16$ tiles (Listing~\ref{lst:wmma_snippet}).} \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\subsection{Naive baseline (three kernels)}
+
+The naive path follows the textbook definition directly: compute $S = QK^\top / \sqrt{d}$ and write the entire matrix to HBM, run a row-wise softmax pass over $S$, then compute $O = PV$. The causal variant masks the upper triangle (setting those logits to $-10^{30}$) before softmax so the output matches the lower-triangular attention pattern. That gives me a correct reference and the worst-case HBM traffic story.
+
+\noindent The QKT kernel is a straightforward dot product per $(\text{row},\text{col})$ pair; the causal variant short-circuits upper-triangular entries:
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\footnotesize, frame=single,
+  commentstyle=\color{green!60!black}]
+__global__ void qkt_kernel(..., float* S, int N, int d) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= N || col >= N) return;
+    float acc = 0.f;
+    for (int k = 0; k < d; ++k)
+        acc += Q[row * d + k] * K[col * d + k];
+    S[row * N + col] = acc * rsqrtf((float)d);
+}
+
+__global__ void qkt_kernel_causal(..., float* S, int N, int d) {
+    // ...
+    if (col > row) { S[row * N + col] = -1e30f; return; }
+    // ... same dot product as dense qkt_kernel
+}
+\end{lstlisting}
+
+\subsection{FlashAttention v1 (tiled FP32)}
+
+FlashAttention avoids ever storing $S$ in HBM. I use tile sizes $B_r = B_c = 32$ with $d = 64$, so the working $Q$, $K$, and $V$ tiles fit in $\approx 24$\,KB of shared memory. Instead of writing a row of $S$ and reading it back for softmax, I track the running row maximum $m_i$ and normalizer $\ell_i$ in registers and rescale the partial output whenever a new tile raises the maximum. Milakov and Gimelshein~\cite{milakov2018} proved this matches a two-pass softmax numerically. Listing~\ref{lst:online_softmax} shows the rescale I use after each inner tile (from \texttt{flash\_attention\_v1.cu}).
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\footnotesize, frame=single,
+  caption={Online softmax rescale and partial $PV$ blend (FlashAttention v1).},
+  label=lst:online_softmax, commentstyle=\color{green!60!black}]
 float m_new = fmaxf(m_i, m_tilde);
 float alpha = expf(m_i - m_new);
 float beta  = expf(m_tilde - m_new);
-
 for (int k = 0; k < d; ++k) {
     float pv_k = 0.0f;
     for (int jj = 0; jj < bc_actual; ++jj)
@@ -86,79 +251,174 @@ m_i = m_new;
 l_i = alpha * l_i + beta * l_tilde;
 \end{lstlisting}
 
-\subsection{Causal FlashAttention}
-For autoregressive masking we add \texttt{flash\_attention\_v1\_causal}: column tiles of $K/V$ that lie entirely in the future for the current $Q$ tile are skipped; within partially valid tiles, logits with $j>i$ are masked before the tile-wise softmax statistics.
+\noindent Each iteration rescales the running output by \texttt{alpha} and blends in the new tile's contribution weighted by \texttt{beta}. When the outer loop finishes, the accumulator holds the softmax-weighted output without ever materializing $S$ in global memory.
 
-\subsection{Warp-Shuffle Row Kernel (\texttt{flash\_v2})}
-\texttt{flash\_attention\_v2.cu} assigns one warp per query row ($B_r{=}8$, $B_c{=}32$, $256$ threads per block). Dot products use warp reductions (\texttt{\_\_shfl\_down\_sync}); Section~\ref{sec:discussion} summarizes measured performance.
+\subsection{Causal FlashAttention (FP32)}
 
-\subsection{WMMA Tensor Core Kernel (\texttt{flash\_wmma})}
-\texttt{flash\_attention\_v3\_wmma.cu} computes $16{\times}16$ score tiles with WMMA \texttt{m16n16k16} on FP16 operands in shared memory while keeping softmax state in FP32. \texttt{flash\_wmma\_db} uses the same kernel body on sm\_75 as a control for double-buffering claims without an Ampere-style async copy path.
+For autoregressive models, position $i$ should only attend to $j \leq i$. In \texttt{flash\_attention\_v1\_causal.cu} I skip entire $K/V$ column tiles when they lie entirely in the future for the current $Q$ tile. On tiles that cross the diagonal, I mask logits with $j > i$ before the softmax update. For large $N$ that is roughly half the work of the non-causal kernel, which shows up in both latency and NCU reads.
 
-\section{Experimental Setup}
-\begin{itemize}
-    \item \textbf{Hardware:} NVIDIA Tesla T4 (sm\_75, Turing Architecture, 8.1 TFLOPs FP32).
-    \item \textbf{Compilation:} Compiled using \texttt{nvcc} via CMake with \texttt{-O3 --extended-lambda --expt-relaxed-constexpr -lineinfo}.
-    \item \textbf{Validation:} Root Mean Square Error (RMSE) against naive references; WMMA targets use a slightly looser FP16 tolerance where noted in code.
-    \item \textbf{Measurement Tooling:} \texttt{cudaEvent} for latency, and \texttt{ncu} (NVIDIA Nsight Compute) for L1TEX bytes traffic evaluation.
-\end{itemize}
+\noindent The early exit in the outer loop over $K/V$ tiles is the main savings: once the start column of a tile is past the last query row in the current $Q$ block, no further tiles can contribute.
 
-\section{Results \& Benchmarks}
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\footnotesize, frame=single,
+  caption={Skipping future-only $K/V$ tiles (causal Flash, excerpt).},
+  label=lst:causal_skip, commentstyle=\color{green!60!black}]
+for (int j = 0; j < Tc; ++j) {
+    const int kv_start = j * BC;
+    // ...
+    if (kv_start > q_row_max_in_block)
+        break;   // entire tile is in the future for this Q block
+    // load K_smem, V_smem, compute logits, online softmax update ...
+}
+\end{lstlisting}
 
-\subsection{Execution Latency (Speedup)}
-FlashAttention exhibits steady and significant speedups over the naive baseline. At $N{=}4096$, latency improves from $\approx 27.03$\,ms to $\approx 15.05$\,ms ($\approx 1.8\times$). At $N{=}8192$, naive $\approx 111.99$\,ms vs.\ Flash v1 $\approx 58.68$\,ms.
+\subsection{Experimental v2 kernel (\texttt{flash\_v2})}
+\label{sec:flashv2}
 
-\begin{figure}[htbp]
+I wrote \texttt{flash\_attention\_v2.cu} to try a different thread layout: $B_r = 16$, $B_c = 32$, 512 threads per block, fused score and softmax buffers in shared memory, and \texttt{\_\_launch\_bounds\_\_(512,2)} after an earlier 1024-thread prototype used $\approx 41$\,KB of shared memory. The hope was better occupancy on T4; as the results show, it did not pay off.
+
+\noindent Listing~\ref{lst:v2_kernel} shows the launch hint, warp shuffle helper, and shared buffers for scores plus running softmax state (one warp per query row within the $B_r$ rows of the $Q$ tile).
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\footnotesize, frame=single,
+  caption={\texttt{flash\_attn\_fwd\_v2}: occupancy hint, warp reduce, shared tiles.},
+  label=lst:v2_kernel, commentstyle=\color{green!60!black}]
+static __device__ inline float warp_reduce_sum(float v) {
+    for (int offset = 16; offset > 0; offset >>= 1)
+        v += __shfl_down_sync(0xffffffffu, v, offset);
+    return v;
+}
+
+template <int BR, int BC, int D>
+__global__ void __launch_bounds__(512, 2)
+flash_attn_fwd_v2(const float* Q, const float* K, const float* V,
+                  float* O, int N)
+{
+    __shared__ float Q_smem[BR][D];
+    __shared__ float K_smem[BC][D], V_smem[BC][D];
+    __shared__ float tile_scr[BR][BC];  // logits, then softmax weights
+    // ... online softmax + PV accumulation ...
+}
+\end{lstlisting}
+
+\subsection{WMMA scores (Tensor Cores)}
+
+\texttt{flash\_attention\_v3\_wmma.cu} calls WMMA (\texttt{m16n16k16}) for $16{\times}16$ score tiles with FP16 operands on the T4's Tensor Cores, while I keep softmax state and the output in FP32~\cite{nvidia_wmma}. The \texttt{flash\_wmma\_db} entry point is the same kernel on sm\_75; a real async double-buffer path would need sm\_80 or newer.
+
+\noindent Listing~\ref{lst:wmma_snippet} is the inner part of the score computation: I convert $Q$ and $K$ tiles to half precision in shared memory, fill WMMA fragments, and accumulate the $16{\times}16$ tile of logits into \texttt{Stile} before softmax.
+
+\begin{lstlisting}[language=C++, basicstyle=\ttfamily\footnotesize, frame=single,
+  caption={WMMA $Q K^\top$ tile (FP16 matmul, FP32 accumulator).},
+  label=lst:wmma_snippet, commentstyle=\color{green!60!black}]
+wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag;
+wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::col_major> b_frag;
+wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag;
+wmma::fill_fragment(c_frag, 0.0f);
+for (int kk = 0; kk < D; kk += 16) {
+    wmma::load_matrix_sync(a_frag, &Qh[0][kk], D);
+    // pack B from Kh into Bpack, then:
+    wmma::load_matrix_sync(b_frag, Bpack, 16);
+    wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+}
+wmma::store_matrix_sync(&Stile[0][0], c_frag, BC, wmma::mem_row_major);
+\end{lstlisting}
+
+\subsection{Companion website}
+
+I also published a visual walk-through of the memory hierarchy at \url{https://batra98.github.io/me759-flashattention}, mainly for readers who want intuition beyond the CUDA in this report.
+
+\section[Results]{Results}
+\label{sec:results}
+
+I benchmarked single-head attention with $d = 64$ and $N \in \{512, 1024, 2048, 4096, 8192\}$. Timings come from \texttt{benchmarks/results/timing.csv}; memory traffic from \texttt{hbm\_traffic.csv}. In each subsection I put the figures and tables first, then explain how I read them.
+
+\subsection{Latency and speedup}
+
+\begin{figure}[H]
     \centering
-    \includegraphics[width=0.75\textwidth]{docs/assets/latency_plot.png}
-    \caption{Execution latency vs.\ sequence length (all kernels in \texttt{benchmarks/results/timing.csv}).}
-    \label{fig:latency}
+    \begin{subfigure}[t]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{latency_plot.png}
+        \caption{End-to-end latency vs.\ $N$.}
+        \label{fig:latency}
+    \end{subfigure}\hfill
+    \begin{subfigure}[t]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{speedup_plot.png}
+        \caption{Speedup relative to \texttt{naive}.}
+        \label{fig:speedup}
+    \end{subfigure}
+    \caption{Results from \texttt{benchmarks/results/timing.csv}.}
+    \label{fig:timing_grid}
 \end{figure}
 
-\begin{figure}[htbp]
+\begin{table}[H]
     \centering
-    \includegraphics[width=0.75\textwidth]{docs/assets/speedup_plot.png}
-    \caption{Speedup vs.\ \texttt{naive} across $N$.}
-    \label{fig:speedup}
-\end{figure}
-
-\begin{table}[htbp]
-    \centering
-    \caption{Mean latency (ms), $d{=}64$, Tesla T4 (representative rows).}
+    \caption{Mean latency (ms), $d{=}64$, Tesla T4.}
     \label{tab:latency}
     \begin{tabular}{lrr}
         \toprule
         Kernel & $N{=}4096$ & $N{=}8192$ \\
         \midrule
-        \texttt{naive} & 27.03 & 111.99 \\
-        \texttt{naive\_causal} & 17.67 & 72.75 \\
+        \texttt{naive} & 27.12 & 113.55 \\
+        \texttt{naive\_causal} & 17.92 & 73.66 \\
         \texttt{flash} & 15.05 & 58.68 \\
-        \texttt{flash\_causal} & 9.49 & 30.60 \\
-        \texttt{flash\_v2} & 71.56 & 289.67 \\
-        \texttt{flash\_wmma} & 15.79 & 50.03 \\
-        \texttt{flash\_wmma\_db} & 15.83 & 50.03 \\
+        \texttt{flash\_causal} & 9.52 & 30.65 \\
+        \texttt{flash\_v2} & 66.33 & 252.88 \\
+        \texttt{flash\_wmma} & 15.79 & 50.19 \\
+        \texttt{flash\_wmma\_db} & 15.79 & 50.18 \\
         \bottomrule
     \end{tabular}
 \end{table}
 
-\subsection{HBM Traffic Reduction}
-Nsight Compute telemetry confirms the core hypothesis. For $N{=}4096$:
-\begin{itemize}
-    \item \textbf{Naive Traffic:} $\approx 25.2$\,GB read, $\approx 1.14$\,GB write (aggregated NCU metrics).
-    \item \textbf{Flash Traffic:} $\approx 2.16$\,GB read, $\approx 8.2$\,MB write.
-\end{itemize}
-This represents an \textbf{$\approx 12\times$ reduction in reads} and an \textbf{$\approx 138\times$ reduction in writes} relative to naive at this sequence length.
+What stands out in Figure~\ref{fig:latency} is the gap that opens between \texttt{naive} and the tiled kernels as $N$ grows. At $N = 512$ everything is within a factor of two; by $N = 8192$ the tiled paths have pulled away. That is what I expected from the IO story: naive pays for the full $N{\times}N$ score matrix in HBM, while tiled Flash does not.
 
-\begin{figure}[htbp]
+In Table~\ref{tab:latency}, \texttt{flash} is $1.93\times$ faster than naive at $N = 8192$ (58.7\,ms vs 113.6\,ms), and \texttt{flash\_causal} wins overall at 30.6\,ms. Causal is faster not only because it does less math, but because I skip future $K/V$ tiles, so I load roughly half the data of the non-causal kernel.
+
+\texttt{flash\_v2} is the outlier in the wrong direction: 252.9\,ms at $N = 8192$, slower than even naive, even though I verified correctness. The memory traffic section below shows why.
+
+WMMA narrows the gap to \texttt{flash\_causal} somewhat (50.2\,ms at $N = 8192$). It beats non-causal Flash but not causal Flash, because I never fused the tile-skipping logic into the WMMA kernel. \texttt{flash\_wmma\_db} matches WMMA on T4; without an Ampere-style async copy pipeline, the double-buffer entry point does nothing extra here.
+
+\subsection{Memory traffic (Nsight Compute)}
+
+\begin{table}[H]
     \centering
-    \includegraphics[width=0.75\textwidth]{docs/assets/hbm_plot.png}
-    \caption{HBM Global Memory Traffic vs Sequence Length. Notice the quadratic scaling of the naive implementation.}
-    \label{fig:hbm}
+    \caption{NCU global loads and stores (MB), $N{=}4096$.}
+    \label{tab:hbm4096}
+    \begin{tabular}{lrr}
+        \toprule
+        Kernel & Read & Write \\
+        \midrule
+        \texttt{naive} & 25{,}835.5 & 1{,}163.8 \\
+        \texttt{naive\_causal} & 15{,}943.7 & 1{,}164.0 \\
+        \texttt{flash} & 2{,}211.8 & 8.39 \\
+        \texttt{flash\_causal} & 1{,}116.2 & 8.39 \\
+        \texttt{flash\_v2} & 4{,}403.2 & 8.39 \\
+        \texttt{flash\_wmma} & 537.9 & 8.39 \\
+        \texttt{flash\_wmma\_db} & 537.9 & 8.39 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[t]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{hbm_plot.png}
+        \caption{Total HBM traffic (read + write; log $y$).}
+        \label{fig:hbm}
+    \end{subfigure}\hfill
+    \begin{subfigure}[t]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{roofline_plot.png}
+        \caption{Roofline-style snapshot (approx.\ TFLOP/s vs operational intensity).}
+        \label{fig:roofline}
+    \end{subfigure}
+    \caption{NCU traffic (\texttt{hbm\_traffic.csv}) and roofline diagnostic (\texttt{python/plot\_results.py}).}
+    \label{fig:mem_roof_grid}
 \end{figure}
 
-\begin{table}[htbp]
+\begin{table}[H]
     \centering
-    \caption{NCU global loads + stores (MB), $N{=}8192$.}
+    \caption{NCU global loads and stores (MB), $N{=}8192$.}
     \label{tab:hbm8192}
     \begin{tabular}{lrrr}
         \toprule
@@ -166,41 +426,54 @@ This represents an \textbf{$\approx 12\times$ reduction in reads} and an \textbf
         \midrule
         \texttt{naive} & 103{,}352.3 & 4{,}663.5 & 108{,}015.8 \\
         \texttt{naive\_causal} & 63{,}785.0 & 4{,}663.7 & 68{,}448.7 \\
-        \texttt{flash} & 8{,}816.6 & 16.8 & 8{,}833.4 \\
-        \texttt{flash\_causal} & 4{,}423.7 & 16.8 & 4{,}440.5 \\
-        \texttt{flash\_v2} & 35{,}194.9 & 16.8 & 35{,}211.7 \\
-        \texttt{flash\_wmma} & 2{,}201.6 & 16.8 & 2{,}218.4 \\
-        \texttt{flash\_wmma\_db} & 2{,}201.6 & 16.8 & 2{,}218.4 \\
+        \texttt{flash} & 8{,}816.6 & 16.78 & 8{,}833.4 \\
+        \texttt{flash\_causal} & 4{,}423.7 & 16.78 & 4{,}440.5 \\
+        \texttt{flash\_v2} & 17{,}582.1 & 16.78 & 17{,}598.9 \\
+        \texttt{flash\_wmma} & 2{,}201.6 & 16.78 & 2{,}218.4 \\
+        \texttt{flash\_wmma\_db} & 2{,}201.6 & 16.78 & 2{,}218.4 \\
         \bottomrule
     \end{tabular}
 \end{table}
 
-\subsection{Roofline-style Diagnostic}
-Figure~\ref{fig:roofline} combines an analytical $4N^2d$ FLOP estimate with NCU byte totals (see \texttt{python/plot\_results.py}).
+The traffic tables~\ref{tab:hbm4096} and~\ref{tab:hbm8192} match what I saw on the timer. At $N = 4096$, naive reads $\approx 25.8$\,GB and writes $\approx 1.14$\,GB; \texttt{flash} reads $\approx 2.21$\,GB and writes only $8.4$\,MB. That is about $12\times$ fewer reads and orders of magnitude fewer writes, because I stopped shuttling the full $S$ matrix through HBM. Writes tell the same story: naive must dump the $N{\times}N$ scores; every tiled variant only writes $O$, so they all land near the same $\approx 8.4$\,MB.
 
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.72\textwidth]{docs/assets/roofline_plot.png}
-    \caption{Roofline-style plot: approximate attained TFLOP/s vs operational intensity.}
-    \label{fig:roofline}
-\end{figure}
+\texttt{flash\_causal} reads about half as much as \texttt{flash} at $N = 8192$ (4.4\,GB vs 8.8\,GB), which directly reflects the tile-skipping: for a given $Q$ tile, all $K/V$ tiles to its right are simply never loaded.
 
-\subsection{Discussion}
-\label{sec:discussion}
-\begin{itemize}
-    \item \textbf{Causal Flash} delivers the best wall-clock times here ($\approx 30.6$\,ms at $N{=}8192$), with NCU totals roughly half those of non-causal Flash for global reads.
-    \item \textbf{WMMA} speeds up non-causal Flash ($\approx 50.0$\,ms) and shows the smallest read footprint in Table~\ref{tab:hbm8192}; it still trails causal Flash in latency unless causal masking and WMMA are fused (future work).
-    \item \textbf{\texttt{flash\_wmma\_db}} matches WMMA on this GPU---no measured gain from the current double-buffer entry point on sm\_75.
-    \item \textbf{\texttt{flash\_v2}} is slower than naive for large $N$ in this sweep and exhibits substantially higher NCU-reported reads than Flash v1; the warp-centric prototype requires redesign to be competitive.
-\end{itemize}
+\texttt{flash\_v2} is the failure I learned the most from. It reads $\approx 17.6$\,GB at $N = 8192$, roughly twice \texttt{flash}, even though I still fused softmax in SRAM. I chose $B_r = 16$ instead of $32$, so the outer loop over $Q$ runs twice as many times; each pass still streams all $N / B_c$ tiles of $K/V$. That doubles $K/V$ traffic versus v1 and explains why the kernel falls behind naive despite correct outputs. It drove home that IO efficiency means matching tile shapes to reuse, not only ``fusing'' softmax.
 
-\section{Interactive Educational Website}
-Alongside the CUDA implementation, the project documentation has been transformed into a highly-readable technical blog hosted at \url{https://batra98.github.io/me759-flashattention}.
+WMMA reaches the lowest read volume at $N = 8192$ ($\approx 2.2$\,GB), below even \texttt{flash\_causal}. FP16 operands are smaller than FP32, so the same $16{\times}16$ score tile loads fewer bytes through L1TEX. Combined with Tensor Core throughput for the $QK^\top$ step, WMMA improves on \texttt{flash} in both traffic and runtime.
 
-A dynamic, CSS-driven state machine visually simulates a single Streaming Multiprocessor, including a glowing Data Bus, Global Memory blocks, SRAM tiles, and a pulsing 32-thread Warp Grid. This provides users with a direct visual intuition of the $O(N^2)$ HBM bottleneck versus SRAM data locality.
+The roofline panel (Figure~\ref{fig:roofline}) is only a rough diagnostic: I used the same $4N^2d$ FLOP estimate for every kernel regardless of precision, and NCU bytes do not line up with an ideal roofline. Still, it separates the clearly memory-heavy kernels (naive, \texttt{flash\_v2}) from the leaner ones (WMMA, causal Flash), which matches the latency ordering I saw.
 
-\section{Future Work}
-Remaining directions include fusing causal masking with WMMA tiles; revisiting warp-centric tiling with occupancy-aware configurations; KV-cache--aware inference kernels; and multi-GPU sequence-parallel attention (NCCL/MPI). FlashAttention-2/3 scheduling ideas remain relevant for further throughput~\cite{dao2022}.
+\section[How I reproduce results]{How I build, run, and reproduce my numbers}
+\label{sec:deliverables}
+
+Section~\ref{sec:codestructure} and Table~\ref{tab:modules} describe the layout of the repo I submitted. The commands below are what I used (and what you can use) to rebuild the binary, rerun timings and NCU, and regenerate the plots from the CSVs.
+
+\subsection{Clone and compile}
+\begin{verbatim}
+git clone https://github.com/batra98/me759-flashattention.git
+cd me759-flashattention
+mkdir -p build && cd build
+cmake .. && make -j"$(nproc)"
+\end{verbatim}
+
+\subsection{Benchmarks and NCU profiling}
+\begin{verbatim}
+./flash_attn --mode correctness --target flash --seq_len 2048
+bash ../benchmarks/run_bench.sh ./flash_attn ../benchmarks/results
+sudo bash ../benchmarks/run_ncu_profile.sh ./flash_attn \
+    ../benchmarks/results/hbm_traffic.csv
+\end{verbatim}
+
+\section[Takeaways]{What I learned and what is next}
+\label{sec:conclusions}
+
+The clearest lesson for me is that tiling alone does not win: you have to match tile shapes to how often you reload $K$ and $V$. The naive baseline shows $O(N^2)$ HBM traffic crushing runtime at large $N$. My FlashAttention v1 kernel fixes that by never writing the full score matrix to HBM, and the $\approx 1.9\times$ speedup at $N = 8192$ lines up with the traffic drop in NCU. Causal masking goes further by skipping work the dense problem never needed, which gave the best latency in my sweep. WMMA cuts reads even further and speeds up the non-causal path, but I did not fuse causal skipping into it yet, so it still loses to causal FP32 on wall-clock time.
+
+In \texttt{flash\_v2} NCU shows twice the reads of v1 because halving $B_r$ doubles how often I sweep $K/V$. That is easy to overlook when you are tuning occupancy. It reminded me that the bottleneck is often memory access patterns, not whether softmax is ``fused'' in principle.
+
+Next, I would fuse causal masking into the WMMA path, revisit \texttt{flash\_v2} with v1-sized tiles for $Q$, and maybe explore KV-cache-aware inference. Longer term, multi-GPU attention and FlashAttention-2/3-style scheduling~\cite{dao2022} are on my list.
 
 \begin{thebibliography}{9}
 
