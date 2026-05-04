@@ -32,8 +32,23 @@ setopt PIPE_FAIL
 # Optional: limit kernels for a quick smoke test, e.g. export MODES="naive flash"
 # export MODES="naive naive_causal flash flash_causal flash_v2 flash_wmma flash_wmma_db"
 
-# FinalProject/ (parent of benchmarks/)
-ROOT=${0:A:h:h}
+# FinalProject root: under sbatch, $0 is the script *copy* under /var/spool/slurmd/...,
+# so ${0:A:h:h} is wrong and mkdir hits Permission denied. Use the dir you ran sbatch from.
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  SUBMIT=${SLURM_SUBMIT_DIR:A}
+  if [[ -f "${SUBMIT}/CMakeLists.txt" ]]; then
+    ROOT=$SUBMIT
+  elif [[ -f "${SUBMIT}/../CMakeLists.txt" ]]; then
+    ROOT=${SUBMIT:h}
+  elif [[ -f "${SUBMIT}/FinalProject/CMakeLists.txt" ]]; then
+    ROOT="${SUBMIT}/FinalProject"
+  else
+    print -u2 "euler_flash_attn_timing.sh: cannot find CMakeLists.txt. Run sbatch from FinalProject/, from FinalProject/benchmarks/, or from the repo root (with FinalProject/)."
+    exit 1
+  fi
+else
+  ROOT=${0:A:h:h}
+fi
 cd "$ROOT"
 
 OUT_ROOT="${OUT_ROOT:-${ROOT}/data/euler_runs}"

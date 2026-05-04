@@ -139,6 +139,8 @@ sbatch benchmarks/euler_flash_attn_timing.sh
 
 The script requests **`#SBATCH --time=00:30:00`** so it stays under the `instruction` partition wall-clock cap (longer jobs show Slurm reason **PartitionTimeLimit** and never start).
 
+Slurm runs a **copy** of the script from **`/var/spool/slurmd/`**, so paths must not be derived from `$0`. The job uses **`SLURM_SUBMIT_DIR`** (the directory you were in when you ran **`sbatch`**). Use **`cd FinalProject`** then **`sbatch benchmarks/euler_flash_attn_timing.sh`**, or `cd FinalProject/benchmarks` then **`sbatch euler_flash_attn_timing.sh`**.
+
 Each job writes **`data/euler_runs/<JOBID>/`**: `job_info.txt`, `nvidia_smi.txt`, a fresh **`build/`**, **`timing.csv`**, and Slurm’s `slurm-<JOBID>.out` / `.err` in the directory from which you ran `sbatch`. That tree is **gitignored** so you can `scp` results back without fighting Git.
 
 For a shorter test, set **`MODES`** before `sbatch` (same as `run_bench.sh`), for example: `export MODES="naive flash"`.
