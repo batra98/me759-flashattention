@@ -64,31 +64,10 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi | tee "${RUN_DIR}/nvidia_smi.txt"
 else
   echo "nvidia-smi not in PATH" | tee "${RUN_DIR}/nvidia_smi.txt"
-fi
-
-# --- Lmod: batch zsh does not load modules unless we source the init script (CSL Euler). ---
-euler_init_lmod() {
-  local f
-  for f in /etc/profile.d/modules.sh /usr/share/lmod/lmod/init/zsh /usr/share/lmod/lmod/init/bash; do
-    [[ -f $f ]] || continue
-    case $f in
-      */init/zsh) source "$f" ;;
-      *) emulate sh -c "source '$f'" ;;
-    esac
-    break
-  done
-}
+fizsh
 
 # --- Toolchain: defaults match `module spider` on engr Euler (gnu15, nvidia/cuda, cmake/4.1.x). ---
 if [[ -z "${EULER_SKIP_MODULES:-}" ]]; then
-  if ! whence module >/dev/null 2>&1; then
-    euler_init_lmod
-  fi
-  if ! whence module >/dev/null 2>&1; then
-    print -u2 "Lmod 'module' still unavailable after sourcing modules.sh."
-    print -u2 "Set EULER_SKIP_MODULES=1 and ensure nvcc, g++, cmake are on PATH, or fix init paths in euler_flash_attn_timing.sh."
-    exit 1
-  fi
   module purge 2>/dev/null || true
   if [[ -n "${EULER_MODULE_GNU:-}" ]]; then
     module load "$EULER_MODULE_GNU"
