@@ -6,7 +6,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --mem=16G
-#SBATCH --time=01:00:00
+# Must be <= instruction partition max wall time (1:00:00 is rejected as PartitionTimeLimit).
+#SBATCH --time=00:30:00
 #SBATCH --output=slurm-%j.out
 #SBATCH --error=slurm-%j.err
 #
@@ -15,7 +16,7 @@
 #
 # Usage (from FinalProject/ on the cluster):
 #   export FLASHATTN_CUDA_ARCH=80    # example: A100; omit or use 75 for sm_75
-#   sbatch benchmarks/euler_flash_attn_timing.slurm
+#   sbatch benchmarks/euler_flash_attn_timing.sh
 #
 # Logs: slurm-%j.out / slurm-%j.err in the directory where you ran sbatch.
 
