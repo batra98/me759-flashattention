@@ -50,7 +50,7 @@
 
 \begin{abstract}
 \noindent
-When a transformer attends over long sequences, the bottleneck is rarely arithmetic: it is the cost of writing a full $N{\times}N$ score matrix to GPU global memory and reading it back for softmax. I implemented a FlashAttention-style forward pass from scratch in CUDA C++, replacing that round trip with tiled shared-memory kernels and an online softmax recurrence~\cite{dao2022,milakov2018}. I benchmarked five kernel families on an NVIDIA Tesla T4 on \textbf{Google Cloud Platform}: a three-kernel naive baseline, tiled FP32 FlashAttention (v1), causal FlashAttention, a warp-centric FP32 experiment (v2), and an FP16 WMMA score path. Tiled Flash cuts latency by roughly $1.9\times$ at $N{=}8192$ and drops global reads by about one order of magnitude at $N{=}4096$. Causal masking gives the best wall-clock time in my runs ($\approx 30.6$\,ms at $N{=}8192$). The WMMA path reaches $\approx 50$\,ms non-causal with the smallest HBM footprint of any variant. The v2 prototype matches the reference but runs slower than even the naive baseline at large $N$, which made for a clear lesson in how tile geometry and memory traffic interact.
+When a transformer attends over long sequences, the bottleneck is rarely arithmetic: it is the cost of writing a full $N{\times}N$ score matrix to GPU global memory and reading it back for softmax. I implemented a FlashAttention-style forward pass from scratch in CUDA C++, replacing that round trip with tiled shared-memory kernels and an online softmax recurrence~\cite{dao2022,milakov2018}. I benchmarked five kernel families on an NVIDIA Tesla T4 on \textbf{Google Cloud Platform}: a three-kernel naive baseline, tiled FP32 FlashAttention (v1), causal FlashAttention, a warp-centric FP32 experiment (v2), and an FP16 WMMA score path. Tiled Flash cuts latency by roughly $1.9\times$ at $N{=}8192$ and drops global reads by about one order of magnitude at $N{=}4096$. Causal masking gives the best wall-clock time in my runs ($\approx 30.6$\,ms at $N{=}8192$). The WMMA path reaches $\approx 50$\,ms non-causal with the smallest HBM footprint of any variant. The v2 prototype matches the reference but runs slower than even the naive baseline at large $N$.
 \textit{All timings and NCU data in this report come from a Tesla T4 on \textbf{Google Cloud Platform}. For measured host and GPU specifications (instance type, bandwidth, driver, CUDA, NCU), see \href{https://github.com/batra98/me759-flashattention/blob/main/FinalProject/README.md\#hardware-environment}{here} (\texttt{FinalProject/README.md}, section \emph{Hardware environment}).}
 
 \medskip
@@ -58,6 +58,9 @@ When a transformer attends over long sequences, the bottleneck is rarely arithme
 
 \medskip
 \noindent\textit{(Interactive write-up: \url{https://batra98.github.io/me759-flashattention}.)}
+
+\medskip
+\noindent\textbf{Video Walkthrough:} A full video walkthrough is available on YouTube at \url{https://youtu.be/a39IGxQ6rKs}.
 \end{abstract}
 
 \clearpage
@@ -66,17 +69,16 @@ When a transformer attends over long sequences, the bottleneck is rarely arithme
 \clearpage
 
 \section{General information}
-\addcontentsline{toc}{section}{General information}
 \begin{itemize}
     \item \textbf{Name:} Gaurav Batra
     \item \textbf{Email:} \href{mailto:gbatra3@wisc.edu}{gbatra3@wisc.edu}
     \item \textbf{Home department:} Computer Sciences
-    \item \textbf{Status:} MS student
+    \item \textbf{Status:} MSCS student
     \item \textbf{Teammate (if applicable):} Not applicable (solo project).
     \item \textbf{Code release:} I release the ME/CS/ECE 759 Final Project code as open source under a BSD 3-Clause license for unfettered use by any interested party.
 \end{itemize}
 
-\section[Problem and goals]{Problem Statement}
+\section{Problem statement}
 \label{sec:problem}
 
 Attention is the engine of modern language models, but the standard implementation has a quiet performance problem. For every forward pass, it writes the full $N{\times}N$ score matrix $S = QK^\top / \sqrt{d}$ to high-bandwidth memory (HBM), then immediately reads it back to compute softmax~\cite{vaswani2017}. At sequence lengths like $N = 4096$ or $N = 8192$, that traffic completely dominates the wall-clock time; the GPU is mostly waiting on memory, not computing.
@@ -85,15 +87,13 @@ Dao et al.~\cite{dao2022} showed that you can avoid materializing $S$ at all by 
 
 I reimplemented that idea from scratch in raw CUDA, without relying on any closed-source kernel libraries. My goals were: (1)~check that my kernels match a reference implementation, (2)~measure how much latency and HBM traffic change on a real T4, and (3)~try a few design variants (causal masking, a warp-centric FP32 layout, and Tensor Core scores) so I could see the tradeoffs between IO, occupancy, and arithmetic directly in the data.
 
-\section[Implementation]{Solution description}
+\section{Solution description}
 \label{sec:solution}
 
 \subsection{Hardware and how I measured}
-I ran all experiments on an \textbf{NVIDIA Tesla T4} (sm\_75, Turing) on \textbf{Google Cloud Platform}. I do not duplicate full machine specifications in this PDF; for the measured host and GPU table (instance type, memory bandwidth, L2, shared memory limits, driver, CUDA toolkit, Nsight Compute version), see \href{https://github.com/batra98/me759-flashattention/blob/main/FinalProject/README.md\#hardware-environment}{README.md} in the repository (\texttt{FinalProject/README.md}, section \emph{Hardware environment}).
+I ran all experiments on an \textbf{NVIDIA Tesla T4} (sm\_75, Turing) on \textbf{Google Cloud Platform}. For the measured host and GPU table (instance type, memory bandwidth, L2, shared memory limits, driver, CUDA toolkit, Nsight Compute version), see \href{https://github.com/batra98/me759-flashattention/blob/main/FinalProject/README.md\#hardware-environment}{README.md} in the repository (\texttt{FinalProject/README.md}, section \emph{Hardware environment}).
 
 I did not use the department \textbf{Euler} cluster for the final numbers: the instruction-partition software stack there paired \textbf{CUDA 12.2} with a \textbf{GCC 15} host compiler that \texttt{nvcc} rejects without non-default overrides and \textbf{Nsight Compute} (\texttt{ncu}) for the HBM sweep is invoked with \texttt{sudo} in \texttt{run\_ncu\_profile.sh}, which Euler does not grant for routine jobs.
-
-I have standardized builds, correctness checks, timings, and NCU on the GCP T4 for a single reproducible environment. Latency is reported as the mean of 20 \texttt{cudaEvent}-timed iterations after 5 warmup runs. I validate outputs with RMSE against the naive FP32 reference; WMMA kernels use a slightly looser tolerance because FP16 score accumulation rounds differently. For memory traffic, I used \textbf{Nsight Compute} (NCU) L1TEX global load/store byte counters, collected with \texttt{FinalProject/benchmarks/run\_ncu\_profile.sh} (run from the \texttt{FinalProject/} directory).
 
 \subsection{Repository layout and build}
 \label{sec:codestructure}
@@ -332,7 +332,7 @@ wmma::store_matrix_sync(&Stile[0][0], c_frag, BC, wmma::mem_row_major);
 
 I also published a visual walk-through of the memory hierarchy at \url{https://batra98.github.io/me759-flashattention}, mainly for readers who want intuition beyond the CUDA in this report.
 
-\section[Results]{Overview of Results}
+\section{Overview of results. Demonstration of your project}
 \label{sec:results}
 
 I benchmarked single-head attention with $d = 64$ and $N \in \{512, 1024, 2048, 4096, 8192\}$. Timings come from \texttt{FinalProject/data/results/timing.csv}; memory traffic from \texttt{hbm\_traffic.csv} in the same folder. In each subsection I put the figures and tables first, then explain how I read them.
@@ -450,9 +450,7 @@ The traffic tables~\ref{tab:hbm4096} and~\ref{tab:hbm8192} match what I saw on t
 
 WMMA reaches the lowest read volume at $N = 8192$ ($\approx 2.2$\,GB), below even \texttt{flash\_causal}. FP16 operands are smaller than FP32, so the same $16{\times}16$ score tile loads fewer bytes through L1TEX. Combined with Tensor Core throughput for the $QK^\top$ step, WMMA improves on \texttt{flash} in both traffic and runtime.
 
-The roofline panel (Figure~\ref{fig:roofline}) is only a rough diagnostic: I used the same $4N^2d$ FLOP estimate for every kernel regardless of precision, and NCU bytes do not line up with an ideal roofline. Still, it separates the clearly memory-heavy kernels (naive, \texttt{flash\_v2}) from the leaner ones (WMMA, causal Flash), which matches the latency ordering I saw.
-
-\section[How I reproduce results]{Deliverables}
+\section{Deliverables. Building \& running your project}
 \label{sec:deliverables}
 
 Section~\ref{sec:codestructure} and Table~\ref{tab:modules} describe the layout of the repo I submitted. The commands below are what I used (and what you can use) to rebuild the binary, rerun timings and NCU, and regenerate the plots from the CSVs.
@@ -473,7 +471,7 @@ sudo bash ../benchmarks/run_ncu_profile.sh ./flash_attn \
     ../data/results/hbm_traffic.csv
 \end{verbatim}
 
-\section[Takeaways]{Conclusions and Future Work}
+\section{Conclusions and Future Work}
 \label{sec:conclusions}
 
 To rebuild the binary, rerun benchmarks and NCU, and regenerate figures from the CSVs, follow \texttt{FinalProject/README.md} (same steps as Section~\ref{sec:deliverables}, with paths relative to \texttt{FinalProject/}).
