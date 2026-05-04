@@ -42,10 +42,11 @@ static constexpr int BR     = 32;  // query tile height (FlashAttention v1)
 static constexpr int BC     = 32;  // key/value tile height (v1)
 // Shared-mem usage: (BR + 2*BC) * D_HEAD * 4 = 96 * 64 * 4 = 24 576 B < 48 KB ✓
 
-// FlashAttention v2 — one warp per query row
-static constexpr int BR_V2 = 8;
+// FlashAttention v2 — one warp per query row (BR warps/block); align BR with v1 so Q-tile
+// count matches flash_v1 and K/V tiles are not over-fetched vs v1.
+static constexpr int BR_V2 = 32;
 static constexpr int BC_V2 = 32;
-// Shared: (BR_V2 + 2*BC_V2)*D*4 = (8+64)*64*4 = 18 432 B
+// Shared ≈ Q+K+V + logits_tile + S_weight ≤ 48 KB on sm_75
 
 // WMMA path — 16×16 tiles, D=64 (four K-chunks)
 static constexpr int BR_WMMA = 16;
