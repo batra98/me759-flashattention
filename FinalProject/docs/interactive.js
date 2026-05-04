@@ -1,6 +1,6 @@
 /**
  * ME759 FlashAttention site: interactive benchmark lab and UI polish
- * Data: T4, d=64, from benchmarks/results/*.csv
+ * Data: T4, d=64, from data/results/*.csv (checked into repo)
  */
 (function () {
   'use strict';

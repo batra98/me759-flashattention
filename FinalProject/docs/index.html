@@ -502,7 +502,7 @@
       <article class="kernel-card kernel-card-note">
         <div class="kc-note-inner">
           <strong>Reproduce everything.</strong>
-          <p>Clone, build <code>flash_attn</code>, run <code>benchmarks/run_bench.sh</code> and <code>run_ncu_profile.sh</code>. The numbers in the lab above come from that same CSV pipeline.</p>
+          <p>Clone, <code>cd FinalProject</code>, build <code>flash_attn</code>, run <code>benchmarks/run_bench.sh</code> and <code>run_ncu_profile.sh</code>. The numbers in the lab above come from that same CSV pipeline (<code>data/results/</code>).</p>
           <a href="#deliverables" class="btn-secondary" style="margin-top:12px;display:inline-flex;">Jump to commands ↓</a>
         </div>
       </article>
@@ -596,11 +596,12 @@ for (int j = 0; j &lt; Tc; ++j) {
     <h2>Build, bench, profile</h2>
     <p class="lab-lede">This is the same shell path I used for the PDF. Copy and paste.</p>
     <pre class="repro-block"><code class="language-bash">git clone https://github.com/batra98/me759-flashattention.git
-cd me759-flashattention && mkdir -p build && cd build
+cd me759-flashattention/FinalProject && mkdir -p build && cd build
 cmake .. && make -j"$(nproc)"
 ./flash_attn --mode correctness --target flash --seq_len 2048
-bash ../benchmarks/run_bench.sh ./flash_attn ../benchmarks/results
-sudo bash ../benchmarks/run_ncu_profile.sh ./flash_attn ../benchmarks/results/hbm_traffic.csv</code></pre>
+bash ../benchmarks/run_bench.sh ./flash_attn ../data/results
+sudo bash ../benchmarks/run_ncu_profile.sh ./flash_attn ../data/results/hbm_traffic.csv
+cd .. && python3 python/plot_results.py</code></pre>
   </div>
 </section>
 

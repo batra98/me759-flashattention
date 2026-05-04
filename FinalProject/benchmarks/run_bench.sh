@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 BIN="${1:-./build/flash_attn}"
-OUT="${2:-./benchmarks/results}"
+OUT="${2:-./data/results}"
 # Override with env MODES="naive flash" for a subset
 DEFAULT_MODES="naive naive_causal flash flash_causal flash_v2 flash_wmma flash_wmma_db"
 MODES="${MODES:-$DEFAULT_MODES}"

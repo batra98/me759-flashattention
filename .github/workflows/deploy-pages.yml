@@ -26,8 +26,8 @@ jobs:
 
       - name: Prep benchmark data
         run: |
-          mkdir -p docs/data
-          cp benchmarks/results/*.csv docs/data/
+          mkdir -p FinalProject/docs/data
+          cp FinalProject/data/results/*.csv FinalProject/docs/data/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -35,7 +35,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/
+          path: FinalProject/docs/
 
       - name: Deploy to GitHub Pages
         id: deployment

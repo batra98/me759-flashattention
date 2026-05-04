@@ -3,10 +3,12 @@
 # Usage: sudo bash run_ncu_profile.sh [binary] [output_csv]
 set -euo pipefail
 
-BIN="${1:-./flash_attn}"
-OUT="${2:-hbm_traffic.csv}"
+BIN="${1:-./build/flash_attn}"
+OUT="${2:-./data/results/hbm_traffic.csv}"
 NCU="${NCU:-/usr/local/cuda/bin/ncu}"
 TMPF="/tmp/ncu_out.txt"
+
+mkdir -p "$(dirname "$OUT")"
 
 DEFAULT_MODES="naive naive_causal flash flash_causal flash_v2 flash_wmma flash_wmma_db"
 MODES="${MODES:-$DEFAULT_MODES}"

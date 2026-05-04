@@ -5,7 +5,7 @@
 \usepackage{amsmath}
 \usepackage{amsfonts}
 \usepackage{graphicx}
-\graphicspath{{docs/assets/}{assets/}{./}}
+\graphicspath{{FinalProject/docs/assets/}{FinalProject/data/results/plots/}{./}}
 \PassOptionsToPackage{hyphens}{url}
 \usepackage{hyperref}
 % Optional: \usepackage{xurl} % extra URL break points (omit if not installed; hyphens + UrlBreaks below suffice)
@@ -75,7 +75,7 @@ When a transformer attends over long sequences, the bottleneck is rarely arithme
     \item \textbf{Code release:} I release the ME/CS/ECE 759 Final Project code as open source under a BSD 3-Clause license for unfettered use by any interested party.
 \end{itemize}
 
-\section[Problem and goals]{Problem and goals}
+\section[Problem and goals]{Problem Statement}
 \label{sec:problem}
 
 Attention is the engine of modern language models, but the standard implementation has a quiet performance problem. For every forward pass, it writes the full $N{\times}N$ score matrix $S = QK^\top / \sqrt{d}$ to high-bandwidth memory (HBM), then immediately reads it back to compute softmax~\cite{vaswani2017}. At sequence lengths like $N = 4096$ or $N = 8192$, that traffic completely dominates the wall-clock time; the GPU is mostly waiting on memory, not computing.
@@ -86,11 +86,11 @@ I reimplemented that idea from scratch in raw CUDA, without relying on any close
 
 For me this was a performance engineering exercise: I wanted to know \emph{why} a kernel is fast or slow, not just that it is. Attention is the natural place to learn that, and it lines up with the IO-aware and GPU programming themes in ME/CS/ECE 759.
 
-\section[Implementation]{What I implemented}
+\section[Implementation]{Solution description}
 \label{sec:solution}
 
 \subsection{Hardware and how I measured}
-I ran all experiments on an \textbf{NVIDIA Tesla T4} (sm\_75, Turing). I report latency as the mean of 20 \texttt{cudaEvent}-timed iterations after 5 warmup runs. I validate outputs with RMSE against the naive FP32 reference; WMMA kernels use a slightly looser tolerance because FP16 score accumulation rounds differently. For memory traffic I used \textbf{Nsight Compute} (NCU) L1TEX global load/store byte counters, collected with \texttt{benchmarks/run\_ncu\_profile.sh}.
+I ran all experiments on an \textbf{NVIDIA Tesla T4} (sm\_75, Turing). I report latency as the mean of 20 \texttt{cudaEvent}-timed iterations after 5 warmup runs. I validate outputs with RMSE against the naive FP32 reference; WMMA kernels use a slightly looser tolerance because FP16 score accumulation rounds differently. For memory traffic I used \textbf{Nsight Compute} (NCU) L1TEX global load/store byte counters, collected with \texttt{FinalProject/benchmarks/run\_ncu\_profile.sh} (run from the \texttt{FinalProject/} directory).
 
 \subsection{Repository layout and build}
 \label{sec:codestructure}
@@ -99,22 +99,26 @@ I use \textbf{CMake} to build a single executable \texttt{flash\_attn} for sm\_7
 
 \begin{verbatim}
 me759-flashattention/
-  CMakeLists.txt
-  src/
-    attention_utils.cuh           % shared macros, timer, constants
-    main.cu                       % CLI, allocations, correctness vs benchmark
-    naive_attention.cu            % three-kernel naive + causal QKT
-    flash_attention_v1.cu         % tiled FP32 Flash (templates BR, BC, D)
-    flash_attention_v1_causal.cu  % causal variant + tile skipping
-    flash_attention_v2.cu         % warp-centric FP32 experiment
-    flash_attention_v3_wmma.cu    % WMMA scores + wmma_db alias
-  benchmarks/
-    run_bench.sh
-    run_ncu_profile.sh
-    results/                      % timing.csv, hbm_traffic.csv (generated)
-  python/
-    plot_results.py               % reads CSVs and produces PNG plots
-  assets/                         % figures for this report (generated)
+  final_report.tex                % this PDF (source at repo root)
+  FinalProject/
+    README.md                     % build, bench, NCU, plots (grader entry point)
+    CMakeLists.txt
+    src/
+      attention_utils.cuh         % shared macros, timer, constants
+      main.cu                     % CLI, allocations, correctness vs benchmark
+      naive_attention.cu        % three-kernel naive + causal QKT
+      flash_attention_v1.cu       % tiled FP32 Flash (templates BR, BC, D)
+      flash_attention_v1_causal.cu
+      flash_attention_v2.cu
+      flash_attention_v3_wmma.cu
+    build/                        % out-of-tree CMake output (gitignored)
+    data/results/                 % timing.csv, hbm_traffic.csv, plots/*.png
+    benchmarks/
+      run_bench.sh
+      run_ncu_profile.sh
+    python/
+      plot_results.py             % reads data/results CSVs, writes PNGs
+    docs/                         % GitHub Pages site + docs/assets figures
 \end{verbatim}
 
 \subsection{Shared utilities (\texttt{attention\_utils.cuh})}
@@ -325,10 +329,10 @@ wmma::store_matrix_sync(&Stile[0][0], c_frag, BC, wmma::mem_row_major);
 
 I also published a visual walk-through of the memory hierarchy at \url{https://batra98.github.io/me759-flashattention}, mainly for readers who want intuition beyond the CUDA in this report.
 
-\section[Results]{Results}
+\section[Results]{Overview of Results}
 \label{sec:results}
 
-I benchmarked single-head attention with $d = 64$ and $N \in \{512, 1024, 2048, 4096, 8192\}$. Timings come from \texttt{benchmarks/results/timing.csv}; memory traffic from \texttt{hbm\_traffic.csv}. In each subsection I put the figures and tables first, then explain how I read them.
+I benchmarked single-head attention with $d = 64$ and $N \in \{512, 1024, 2048, 4096, 8192\}$. Timings come from \texttt{FinalProject/data/results/timing.csv}; memory traffic from \texttt{hbm\_traffic.csv} in the same folder. In each subsection I put the figures and tables first, then explain how I read them.
 
 \subsection{Latency and speedup}
 
@@ -346,7 +350,7 @@ I benchmarked single-head attention with $d = 64$ and $N \in \{512, 1024, 2048, 
         \caption{Speedup relative to \texttt{naive}.}
         \label{fig:speedup}
     \end{subfigure}
-    \caption{Results from \texttt{benchmarks/results/timing.csv}.}
+    \caption{Results from \texttt{FinalProject/data/results/timing.csv}.}
     \label{fig:timing_grid}
 \end{figure}
 
@@ -412,7 +416,7 @@ WMMA narrows the gap to \texttt{flash\_causal} somewhat (50.2\,ms at $N = 8192$)
         \caption{Roofline-style snapshot (approx.\ TFLOP/s vs operational intensity).}
         \label{fig:roofline}
     \end{subfigure}
-    \caption{NCU traffic (\texttt{hbm\_traffic.csv}) and roofline diagnostic (\texttt{python/plot\_results.py}).}
+    \caption{NCU traffic (\texttt{hbm\_traffic.csv}) and roofline diagnostic (\texttt{FinalProject/python/plot\_results.py}).}
     \label{fig:mem_roof_grid}
 \end{figure}
 
@@ -445,15 +449,20 @@ WMMA reaches the lowest read volume at $N = 8192$ ($\approx 2.2$\,GB), below eve
 
 The roofline panel (Figure~\ref{fig:roofline}) is only a rough diagnostic: I used the same $4N^2d$ FLOP estimate for every kernel regardless of precision, and NCU bytes do not line up with an ideal roofline. Still, it separates the clearly memory-heavy kernels (naive, \texttt{flash\_v2}) from the leaner ones (WMMA, causal Flash), which matches the latency ordering I saw.
 
-\section[How I reproduce results]{How I build, run, and reproduce my numbers}
+\section[How I reproduce results]{Deliverables}
 \label{sec:deliverables}
 
 Section~\ref{sec:codestructure} and Table~\ref{tab:modules} describe the layout of the repo I submitted. The commands below are what I used (and what you can use) to rebuild the binary, rerun timings and NCU, and regenerate the plots from the CSVs.
 
+\subsection{Submission layout (\texttt{FinalProject/})}
+\label{sec:finalproject_layout}
+
+The course staff clone the repository and look for course code under a top-level folder named exactly \texttt{FinalProject/}. All CUDA sources, CMake, benchmarks, plotting scripts, and the GitHub Pages site live there. Generated CSVs and plot PNGs are under \texttt{FinalProject/data/results/} (with \texttt{build/} reserved for out-of-tree compilation; both are described in \texttt{FinalProject/README.md}). Section~\ref{sec:codestructure} mirrors that tree in more detail.
+
 \subsection{Clone and compile}
 \begin{verbatim}
 git clone https://github.com/batra98/me759-flashattention.git
-cd me759-flashattention
+cd me759-flashattention/FinalProject
 mkdir -p build && cd build
 cmake .. && make -j"$(nproc)"
 \end{verbatim}
@@ -461,13 +470,16 @@ cmake .. && make -j"$(nproc)"
 \subsection{Benchmarks and NCU profiling}
 \begin{verbatim}
 ./flash_attn --mode correctness --target flash --seq_len 2048
-bash ../benchmarks/run_bench.sh ./flash_attn ../benchmarks/results
+bash ../benchmarks/run_bench.sh ./flash_attn ../data/results
 sudo bash ../benchmarks/run_ncu_profile.sh ./flash_attn \
-    ../benchmarks/results/hbm_traffic.csv
+    ../data/results/hbm_traffic.csv
+cd .. && python3 python/plot_results.py
 \end{verbatim}
 
-\section[Takeaways]{What I learned and what is next}
+\section[Takeaways]{Conclusions and Future Work}
 \label{sec:conclusions}
+
+To rebuild the binary, rerun benchmarks and NCU, and regenerate figures from the CSVs, follow \texttt{FinalProject/README.md} (same steps as Section~\ref{sec:deliverables}, with paths relative to \texttt{FinalProject/}).
 
 The clearest lesson for me is that tiling alone does not win: you have to match tile shapes to how often you reload $K$ and $V$. The naive baseline shows $O(N^2)$ HBM traffic crushing runtime at large $N$. My FlashAttention v1 kernel fixes that by never writing the full score matrix to HBM, and the $\approx 1.9\times$ speedup at $N = 8192$ lines up with the traffic drop in NCU. Causal masking goes further by skipping work the dense problem never needed, which gave the best latency in my sweep. WMMA cuts reads even further and speeds up the non-causal path, but I did not fuse causal skipping into it yet, so it still loses to causal FP32 on wall-clock time.
 

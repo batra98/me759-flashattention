@@ -4,6 +4,9 @@ import os
 import sys
 import matplotlib.pyplot as plt
 
+# FinalProject/ (parent of this script's directory)
+BASE = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+
 D_HEAD = 64
 # Tesla T4 peak FP32 ~ 8.1 TFLOPS; memory bandwidth ~320 GB/s (reference lines only)
 PEAK_TFLOPS_FP32 = 8.1
@@ -25,15 +28,20 @@ def read_csv(path):
 
 
 def main():
-    timing = read_csv("benchmarks/results/timing.csv")
-    hbm = read_csv("benchmarks/results/hbm_traffic.csv")
+    timing_path = os.path.join(BASE, "data/results/timing.csv")
+    hbm_path = os.path.join(BASE, "data/results/hbm_traffic.csv")
+    plots_dir = os.path.join(BASE, "data/results/plots")
+    docs_assets = os.path.join(BASE, "docs/assets")
+
+    timing = read_csv(timing_path)
+    hbm = read_csv(hbm_path)
 
     if not timing:
-        print("Error: Could not find benchmarks/results/timing.csv", file=sys.stderr)
+        print(f"Error: Could not find {timing_path}", file=sys.stderr)
         sys.exit(1)
 
-    os.makedirs("benchmarks/results/plots", exist_ok=True)
-    os.makedirs("docs/assets", exist_ok=True)
+    os.makedirs(plots_dir, exist_ok=True)
+    os.makedirs(docs_assets, exist_ok=True)
 
     seq_lens = sorted({int(r["seq_len"]) for r in timing})
     modes = []
@@ -69,8 +77,8 @@ def main():
     plt.legend(fontsize=8, loc="upper left")
     plt.xticks(seq_lens)
     plt.tight_layout()
-    plt.savefig("benchmarks/results/plots/latency_plot.png", dpi=300)
-    plt.savefig("docs/assets/latency_plot.png", dpi=300)
+    plt.savefig(os.path.join(plots_dir, "latency_plot.png"), dpi=300)
+    plt.savefig(os.path.join(docs_assets, "latency_plot.png"), dpi=300)
     plt.close()
     print("Saved latency_plot.png")
 
@@ -95,8 +103,8 @@ def main():
         plt.legend(fontsize=8, loc="upper left")
         plt.xticks(seq_lens)
         plt.tight_layout()
-        plt.savefig("benchmarks/results/plots/speedup_plot.png", dpi=300)
-        plt.savefig("docs/assets/speedup_plot.png", dpi=300)
+        plt.savefig(os.path.join(plots_dir, "speedup_plot.png"), dpi=300)
+        plt.savefig(os.path.join(docs_assets, "speedup_plot.png"), dpi=300)
         plt.close()
         print("Saved speedup_plot.png")
 
@@ -122,8 +130,8 @@ def main():
         plt.legend(fontsize=8, loc="upper left")
         plt.xticks(seq_lens)
         plt.tight_layout()
-        plt.savefig("benchmarks/results/plots/hbm_plot.png", dpi=300)
-        plt.savefig("docs/assets/hbm_plot.png", dpi=300)
+        plt.savefig(os.path.join(plots_dir, "hbm_plot.png"), dpi=300)
+        plt.savefig(os.path.join(docs_assets, "hbm_plot.png"), dpi=300)
         plt.close()
         print("Saved hbm_plot.png")
 
@@ -160,12 +168,12 @@ def main():
         plt.grid(True, linestyle="--", alpha=0.6)
         plt.legend(fontsize=7, loc="best")
         plt.tight_layout()
-        plt.savefig("benchmarks/results/plots/roofline_plot.png", dpi=300)
-        plt.savefig("docs/assets/roofline_plot.png", dpi=300)
+        plt.savefig(os.path.join(plots_dir, "roofline_plot.png"), dpi=300)
+        plt.savefig(os.path.join(docs_assets, "roofline_plot.png"), dpi=300)
         plt.close()
         print("Saved roofline_plot.png")
     else:
-        print("Note: benchmarks/results/hbm_traffic.csv missing — skipped roofline_plot.png")
+        print(f"Note: {hbm_path} missing: skipped roofline_plot.png")
 
 
 if __name__ == "__main__":
