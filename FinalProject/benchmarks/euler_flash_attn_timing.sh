@@ -12,7 +12,8 @@
 #SBATCH --error=slurm-%j.err
 #
 # UW CSL Euler: build + timing sweep (no NCU). From FinalProject/: sbatch benchmarks/euler_flash_attn_timing.sh
-# Edit the three module lines or FLASHATTN_CUDA_ARCH below if your node stack differs.
+# Edit module lines / FLASHATTN_CUDA_ARCH if your node differs. nvcc 12.2 + gnu15 needs
+# -allow-unsupported-compiler (gnu15 is GCC 15; CUDA 12.2 officially supports host GCC <= 12).
 
 set -eu
 setopt PIPE_FAIL
@@ -70,8 +71,8 @@ fi
 command -v nvcc >/dev/null 2>&1 || { print -u2 "nvcc not on PATH after module load."; exit 1 }
 command -v g++ >/dev/null 2>&1 || { print -u2 "g++ not on PATH after module load."; exit 1 }
 
-# sm_80 = A100 etc.; use 75 for T4 / Turing — must match the GPU you requested.
-FLASHATTN_CUDA_ARCH=80
+# RTX 4000 Ada on euler instruction nodes is sm_89; use 80 for A100, 75 for T4/Turing.
+FLASHATTN_CUDA_ARCH=89
 
 export CUDACXX="$(command -v nvcc)"
 
@@ -83,7 +84,8 @@ cmake "${ROOT}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DFLASHATTN_CUDA_ARCH="${FLASHATTN_CUDA_ARCH}" \
   -DCMAKE_CUDA_COMPILER="$(command -v nvcc)" \
-  -DCMAKE_CXX_COMPILER="$(command -v g++)"
+  -DCMAKE_CXX_COMPILER="$(command -v g++)" \
+  -DCMAKE_CUDA_FLAGS=-allow-unsupported-compiler
 
 make -j"${SLURM_CPUS_PER_TASK:-4}"
 
