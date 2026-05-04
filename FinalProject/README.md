@@ -120,9 +120,3 @@ python3 python/plot_results.py
 ```
 
 Refreshes `data/results/plots/*.png` and `docs/assets/*.png`.
-
----
-
-## More context
-
-The repository root `README.md` is a short pointer into this folder. For equations, listings, and discussion of tile shapes and NCU methodology, see **`final_report.tex`** (or the compiled PDF you submit for the course).
