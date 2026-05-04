@@ -3,8 +3,8 @@
 #include <cfloat>
 #include <cmath>
 
-// FlashAttention v2 — one warp per query row. Per-row O_acc / (m,l) live in shared memory
-// so only ~32 lane-0 threads per block touch them (not 1024 × O_acc[D] registers).
+// Warp-wise dot products + online softmax. BR=16 keeps shared memory (~26 KB) low enough
+// for better occupancy on T4 vs BR=32 (~41 KB, typically 1 block/SM).
 
 static __device__ inline float warp_reduce_sum(float v) {
     #pragma unroll
@@ -14,7 +14,8 @@ static __device__ inline float warp_reduce_sum(float v) {
 }
 
 template <int BR, int BC, int D>
-__global__ void __launch_bounds__(1024, 2)
+// BR_V2=16 => 512 threads; min 2 blocks/SM is a hint (ptxas may still cap by smem)
+__global__ void __launch_bounds__(512, 2)
 flash_attn_fwd_v2(
         const float* __restrict__ Q,
         const float* __restrict__ K,
@@ -25,8 +26,8 @@ flash_attn_fwd_v2(
     __shared__ float Q_smem[BR][D];
     __shared__ float K_smem[BC][D];
     __shared__ float V_smem[BC][D];
-    __shared__ float logits_tile[BR][BC];
-    __shared__ float S_weight[BR][BC];
+    // logits written first; lane 0 overwrites with softmax weights before PV
+    __shared__ float tile_scr[BR][BC];
     __shared__ float O_acc_smem[BR][D];
     __shared__ float m_i_smem[BR];
     __shared__ float l_i_smem[BR];
@@ -88,7 +89,7 @@ flash_attn_fwd_v2(
                     partial += Q_smem[warp_id][k] * K_smem[jj][k];
                 partial = warp_reduce_sum(partial);
                 if (lane == 0)
-                    logits_tile[warp_id][jj] = partial * scale;
+                    tile_scr[warp_id][jj] = partial * scale;
             }
         }
         __syncthreads();
@@ -99,12 +100,12 @@ flash_attn_fwd_v2(
 
             float m_tilde = -FLT_MAX;
             for (int jj = 0; jj < bc_actual; ++jj)
-                m_tilde = fmaxf(m_tilde, logits_tile[warp_id][jj]);
+                m_tilde = fmaxf(m_tilde, tile_scr[warp_id][jj]);
 
             float l_tilde = 0.0f;
             for (int jj = 0; jj < bc_actual; ++jj) {
-                float w = expf(logits_tile[warp_id][jj] - m_tilde);
-                S_weight[warp_id][jj] = w;
+                float w = expf(tile_scr[warp_id][jj] - m_tilde);
+                tile_scr[warp_id][jj] = w;
                 l_tilde += w;
             }
 
@@ -117,7 +118,7 @@ flash_attn_fwd_v2(
             for (int k = 0; k < D; ++k) {
                 float pv_k = 0.0f;
                 for (int jj = 0; jj < bc_actual; ++jj)
-                    pv_k += S_weight[warp_id][jj] * V_smem[jj][k];
+                    pv_k += tile_scr[warp_id][jj] * V_smem[jj][k];
                 O_acc_smem[warp_id][k] =
                     alpha * O_acc_smem[warp_id][k] + beta * pv_k;
             }
