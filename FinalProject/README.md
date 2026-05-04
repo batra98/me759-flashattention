@@ -120,3 +120,23 @@ python3 python/plot_results.py
 ```
 
 Refreshes `data/results/plots/*.png` and `docs/assets/*.png`.
+
+---
+
+## Euler (Slurm, timing only)
+
+On department clusters you typically **do not have sudo**, so **Nsight Compute profiling is skipped** here. The batch script follows the same Slurm style as course homework in `repo759` (`#SBATCH -p instruction`, `--gres=gpu:1`, optional `module load` lines you can uncomment).
+
+1. Clone the repo on Euler and `cd` into **`FinalProject/`**.
+2. Set **`FLASHATTN_CUDA_ARCH`** to match the GPU (for example **`80`** on A100, **`75`** on T4/Turing). The default in CMake is **75**.
+3. Uncomment and fix **`module load`** lines in `benchmarks/euler_flash_attn_timing.slurm` if `cmake` / `nvcc` are not already on your `PATH`.
+4. Submit:
+
+```bash
+export FLASHATTN_CUDA_ARCH=80   # example; use 75 on sm_75 GPUs
+sbatch benchmarks/euler_flash_attn_timing.slurm
+```
+
+Each job writes **`data/euler_runs/<JOBID>/`**: `job_info.txt`, `nvidia_smi.txt`, a fresh **`build/`**, **`timing.csv`**, and Slurm’s `slurm-<JOBID>.out` / `.err` in the directory from which you ran `sbatch`. That tree is **gitignored** so you can `scp` results back without fighting Git.
+
+For a shorter test, set **`MODES`** before `sbatch` (same as `run_bench.sh`), for example: `export MODES="naive flash"`.

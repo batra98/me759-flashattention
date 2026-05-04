@@ -1,11 +1,15 @@
 cmake_minimum_required(VERSION 3.18)
+
+# Default matches Tesla T4 / Turing (sm_75). On Euler or other clusters:
+#   cmake -DFLASHATTN_CUDA_ARCH=80 ..
+# for A100 (sm_80), or export FLASHATTN_CUDA_ARCH before sbatch.
+set(FLASHATTN_CUDA_ARCH "75" CACHE STRING "CUDA real arch for nvcc (e.g. 75, 80, 70)")
+set(CMAKE_CUDA_ARCHITECTURES "${FLASHATTN_CUDA_ARCH}")
+
 project(FlashAttentionME759 CUDA CXX)
 
 set(CMAKE_CXX_STANDARD  17)
 set(CMAKE_CUDA_STANDARD 17)
-
-# Target: NVIDIA RTX 2080 Ti — Turing, sm_75
-set(CMAKE_CUDA_ARCHITECTURES 75)
 
 add_executable(flash_attn
     src/main.cu
