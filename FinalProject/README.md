@@ -139,7 +139,7 @@ sudo bash ../benchmarks/run_ncu_profile.sh ./flash_attn ../data/results/hbm_traf
 
 ## Plots
 
-Python 3 is required. Install the dependencies using `requirements.txt` (and ensure a writable `MPLCONFIGDIR` if your home cache is not writable):
+Python 3 is required. Install the dependencies using `requirements.txt`:
 
 ```bash
 cd /path/to/me759-flashattention/FinalProject
