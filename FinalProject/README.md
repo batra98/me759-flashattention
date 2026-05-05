@@ -37,7 +37,7 @@ All timings and NCU data were collected on the following GCP instance:
 
 | Area | Status |
 |------|--------|
-| **Hardware target** | NVIDIA Tesla T4 (`sm_75`, see table above) on a **Google Cloud Platform** `n1-standard-4` VM. Timings and NCU CSVs in this repo were collected there. I did **not** use the department **Euler** cluster: instruction nodes exposed a **CUDA 12.2 / GCC 15** toolchain mismatch for `nvcc`; Slurm/GPU types differed from this T4-focused build; and **Nsight Compute** (`ncu`) for `run_ncu_profile.sh` expects **`sudo`**, which Euler does not allow for normal jobs—so everything was standardized on GCP. |
+| **Hardware target** | NVIDIA Tesla T4 (`sm_75`, see table above) on a **Google Cloud Platform** `n1-standard-4` VM. Timings and NCU CSVs in this repo were collected there. I did **not** use the department **Euler** cluster: instruction nodes exposed a **CUDA 12.2 / GCC 15** toolchain mismatch for `nvcc`; Slurm/GPU types differed from this T4-focused build; and **Nsight Compute** (`ncu`) for `run_ncu_profile.sh` expects **`sudo`**, which Euler does not allow for normal jobs - so everything was standardized on GCP. |
 | **Correctness** | Each mode is checked against the naive FP32 reference (`--mode correctness`); WMMA modes use a slightly looser RMSE tolerance because of FP16 score accumulation. |
 | **Latency sweep** | Checked-in `data/results/timing.csv`: N ∈ {512, 1024, 2048, 4096, 8192}, d = 64, 5 warmup + 20 timed iterations per point. |
 | **Profiling** | Checked-in `data/results/hbm_traffic.csv`: Nsight Compute L1TEX global byte counters via `benchmarks/run_ncu_profile.sh`. |
@@ -139,10 +139,11 @@ sudo bash ../benchmarks/run_ncu_profile.sh ./flash_attn ../data/results/hbm_traf
 
 ## Plots
 
-Python 3 with **matplotlib** (and a writable `MPLCONFIGDIR` if your home cache is not writable):
+Python 3 is required. Install the dependencies using `requirements.txt` (and ensure a writable `MPLCONFIGDIR` if your home cache is not writable):
 
 ```bash
 cd /path/to/me759-flashattention/FinalProject
+pip install -r requirements.txt
 python3 python/plot_results.py
 ```
 
